@@ -9,7 +9,7 @@ export default function LoanDevices({ data }) {
   const filter = useCallback((d, q) => {
     const query = q.toLowerCase()
     return !d.archived && (
-      (d.serial_number || "").toLowerCase().includes(query) ||
+      (d.lnb || "").toLowerCase().includes(query) ||
       (d.host_name || "").toLowerCase().includes(query) ||
       (d.model || "").toLowerCase().includes(query)
     )
@@ -23,10 +23,10 @@ export default function LoanDevices({ data }) {
         items={data.devices}
         filter={filter}
         getKey={(d) => d.id}
-        getPrimary={(d) => d.serial_number || "—"}
+        getPrimary={(d) => d.lnb || "—"}
         getSecondary={(d) => [d.host_name, d.model].filter(Boolean).join(" · ")}
         onSelect={setDevice}
-        placeholder="Search serial, device name or model"
+        placeholder="Search LNB, device name or model"
         autoFocus
       />
 
@@ -36,7 +36,7 @@ export default function LoanDevices({ data }) {
 
       {device && (
         <Card className="p-5">
-          <FieldRow label="Serial No" value={device.serial_number} />
+          <FieldRow label="LNB No" value={device.lnb} />
           <FieldRow label="Device Name" value={device.host_name} />
           <FieldRow label="Device Model" value={device.model} />
           <FieldRow label="Insurance" value={device.insurance_status} />

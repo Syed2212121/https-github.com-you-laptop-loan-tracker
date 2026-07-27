@@ -131,8 +131,8 @@ export default function LoanPortal({ data, refresh, session }) {
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium text-ink truncate">
-                          {dev ? (dev.host_name || dev.serial_number) : "Device removed"}
-                          {dev?.serial_number && dev?.host_name && <span className="text-muted font-normal"> · {dev.serial_number}</span>}
+                          {dev ? (dev.lnb || dev.host_name) : "Device removed"}
+                          {dev?.lnb && dev?.host_name && <span className="text-muted font-normal"> · {dev.host_name}</span>}
                         </div>
                         <div className="text-xs text-muted flex flex-wrap gap-x-2">
                           <span>Issued {fmtDate(loan.issued_at)}</span>
@@ -170,11 +170,11 @@ function ActiveLoanPanel({ loan, device, busy, onReturn, onRenew }) {
         <LoanStateBadge loan={loan} />
       </div>
       <div className="text-sm font-semibold text-ink">
-        {device ? (device.host_name || device.serial_number) : "Unknown device"}
+        {device ? (device.lnb || device.host_name) : "Unknown device"}
       </div>
       <div className="text-xs text-muted">
         {device?.model && <span>{device.model} · </span>}
-        {device?.serial_number && <span>SN {device.serial_number} · </span>}
+        {device?.host_name && <span>{device.host_name} · </span>}
         Due {fmtDate(loan.due_at)}
       </div>
       <div className="flex gap-2 mt-3">
@@ -196,15 +196,15 @@ function DevicePicker({ devices, busy, onPick }) {
     return devices
       .filter(d => d.status === "available" && !d.archived)
       .filter(d => !query
+        || (d.lnb || "").toLowerCase().includes(query)
         || (d.host_name || "").toLowerCase().includes(query)
-        || (d.serial_number || "").toLowerCase().includes(query)
         || (d.model || "").toLowerCase().includes(query))
       .slice(0, 50)
   }, [devices, q])
 
   return (
     <div className="space-y-3">
-      <Input label="Find an available device" value={q} onChange={setQ} placeholder="Host name, serial, or model" autoFocus />
+      <Input label="Find an available device" value={q} onChange={setQ} placeholder="LNB, device name, or model" autoFocus />
       {available.length === 0 ? (
         <div className="text-sm text-muted text-center py-6">No available devices match. Free one up by processing a return, or import your inventory.</div>
       ) : (
@@ -218,8 +218,8 @@ function DevicePicker({ devices, busy, onPick }) {
             >
               <Laptop size={18} className="text-navy shrink-0" />
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-ink truncate">{d.host_name || d.serial_number || "Device"}</div>
-                <div className="text-xs text-muted truncate">{[d.serial_number, d.model].filter(Boolean).join(" · ")}</div>
+                <div className="text-sm font-medium text-ink truncate">{d.lnb || d.host_name || "Device"}</div>
+                <div className="text-xs text-muted truncate">{[d.host_name, d.model].filter(Boolean).join(" · ")}</div>
               </div>
               <Badge tone="ok">Available</Badge>
             </button>
