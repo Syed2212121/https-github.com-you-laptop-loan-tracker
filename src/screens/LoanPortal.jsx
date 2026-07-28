@@ -5,7 +5,7 @@ import {
 } from "lucide-react"
 import { Button, Card, Modal, Badge, Input, EmptyState } from "../ui"
 import { LoanStateBadge, FieldRow, SearchSelect, ScreenHeader } from "./common"
-import { displayName, fmtDate, slId, splitClassForm, activeLoanForStudent, loanState } from "../lib"
+import { displayName, fmtDate, splitClassForm, activeLoanForStudent, loanState } from "../lib"
 import { issueLoan, returnLoan, renewLoan } from "../actions"
 
 export default function LoanPortal({ data, refresh, session }) {
@@ -62,7 +62,7 @@ export default function LoanPortal({ data, refresh, session }) {
         items={data.students}
         filter={filter}
         getKey={(s) => s.student_id}
-        getPrimary={(s) => slId(s.student_id)}
+        getPrimary={(s) => s.student_id}
         getSecondary={(s) => displayName(s)}
         getMeta={(s) => s.class || ""}
         onSelect={(s) => { setStudent(s); setError("") }}
@@ -86,7 +86,7 @@ export default function LoanPortal({ data, refresh, session }) {
           <Card className="p-5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <FieldRow label="Student ID" value={slId(student.student_id)} />
+                <FieldRow label="Student ID" value={student.student_id} />
                 <FieldRow label="Student Name" value={displayName(student)} />
                 <FieldRow label="Student Class" value={cls} />
               </div>

@@ -2,7 +2,7 @@ import React, { useState, useCallback } from "react"
 import { GraduationCap } from "lucide-react"
 import { Card, EmptyState } from "../ui"
 import { FieldRow, SearchSelect, ScreenHeader } from "./common"
-import { displayName, slId, splitClassForm, deviceForStudent } from "../lib"
+import { displayName, splitClassForm, deviceForStudent } from "../lib"
 
 export default function StudentDevices({ data }) {
   const [student, setStudent] = useState(null)
@@ -27,7 +27,7 @@ export default function StudentDevices({ data }) {
         items={data.students}
         filter={filter}
         getKey={(s) => s.student_id}
-        getPrimary={(s) => slId(s.student_id)}
+        getPrimary={(s) => s.student_id}
         getSecondary={(s) => displayName(s)}
         getMeta={(s) => s.class || ""}
         onSelect={setStudent}
@@ -42,7 +42,7 @@ export default function StudentDevices({ data }) {
 
       {student && (
         <Card className="p-5">
-          <FieldRow label="Student ID" value={slId(student.student_id)} />
+          <FieldRow label="Student ID" value={student.student_id} />
           <FieldRow label="Student Name" value={displayName(student)} />
           <FieldRow label="Class" value={cls} />
           <FieldRow label="Form" value={form} />
