@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react"
-import { GraduationCap, HardDrive, Users, ClipboardList, Upload, LogOut, Loader2 } from "lucide-react"
+import { GraduationCap, HardDrive, Users, ClipboardList, Upload, Network, LogOut, Loader2 } from "lucide-react"
 import { supabase } from "./supabase"
 import LoginScreen from "./LoginScreen"
 import BottomNav from "./BottomNav"
@@ -10,6 +10,7 @@ import LoanDevices from "./screens/LoanDevices"
 import StaffDevices from "./screens/StaffDevices"
 import LoanPortal from "./screens/LoanPortal"
 import Import from "./screens/Import"
+import ProjectStructure from "./screens/ProjectStructure"
 
 // ============================================================
 // DATA LAYER — loads students / devices / loans, optimistic patches
@@ -79,7 +80,13 @@ export default function App() {
     { key: "staffDevices", label: "Staff", icon: Users },
     { key: "loanPortal", label: "Loan", icon: ClipboardList },
   ]
-  const topNav = [...navItems, { key: "import", label: "Import", icon: Upload }]
+  // Import and Structure are setup/reference screens — desktop header only,
+  // so the mobile bottom bar stays on the four daily tasks.
+  const topNav = [
+    ...navItems,
+    { key: "import", label: "Import", icon: Upload },
+    { key: "structure", label: "Structure", icon: Network },
+  ]
 
   const signOut = () => supabase.auth.signOut()
 
@@ -132,6 +139,7 @@ export default function App() {
             {tab === "staffDevices" && <StaffDevices {...screenProps} />}
             {tab === "loanPortal" && <LoanPortal {...screenProps} />}
             {tab === "import" && <Import {...screenProps} />}
+            {tab === "structure" && <ProjectStructure {...screenProps} />}
           </>
         )}
       </main>
