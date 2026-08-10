@@ -46,7 +46,6 @@ export default function StudentDevices({ data }) {
           <FieldRow label="Student Name" value={displayName(student)} />
           <FieldRow label="Class" value={cls} />
           <FieldRow label="Form" value={form} />
-          <FieldRow label="LNB No" value={device?.lnb} />
           <FieldRow label="Serial Number" value={device?.serial_number} />
           <FieldRow label="Device Name" value={device?.host_name} />
           <FieldRow label="Device Model" value={device?.model} />

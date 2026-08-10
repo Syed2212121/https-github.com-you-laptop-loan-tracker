@@ -7,6 +7,37 @@ export const DUE_SOON_DAYS = 2       // "due soon" window before due date
 
 const MS_DAY = 1000 * 60 * 60 * 24
 
+// ------------------------------------------------------------
+// CABINS — the three physical cupboards loan laptops live in,
+// each staffed by two IT members who can hand a laptop over.
+// ------------------------------------------------------------
+export const CABINS = [
+  { key: "yr3_5", label: "Cabin Year 3–5", staff: ["Rudi", "Leo"] },
+  { key: "yr6_7", label: "Cabin Year 6–7", staff: ["Adil", "Lee"] },
+  { key: "yr8_9", label: "Cabin Year 8–9", staff: ["Syed", "Nadeem"] },
+]
+
+export const ALL_CABIN_STAFF = CABINS.flatMap(c => c.staff)
+
+export const cabinByKey = (key) => CABINS.find(c => c.key === key) || null
+
+// Map a loose CSV cabin value onto a cabin key. Tolerant of wording and
+// dash style: "3-5", "Yr 3-5", "Cabin Year 3–5", "35" all → "yr3_5".
+// Returns null for blanks and anything unrecognised.
+export function normalizeCabin(raw) {
+  const s = String(raw ?? "").trim()
+  if (!s) return null
+  if (CABINS.some(c => c.key === s)) return s      // already a key
+  const digits = s.replace(/\D/g, "")
+  if (digits.length !== 2) return null
+  const found = CABINS.find(c => c.key.replace(/\D/g, "") === digits)
+  return found ? found.key : null
+}
+
+// The loan-vs-student boundary. The devices table holds both CSV-imported
+// student laptops and LNB loan laptops; only the latter carry an LNB.
+export const isLoanDevice = (d) => !!d.lnb && !d.archived
+
 export const now = () => new Date()
 
 export function addDays(date, days) {

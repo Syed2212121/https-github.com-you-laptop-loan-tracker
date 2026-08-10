@@ -2,7 +2,7 @@ import React from "react"
 import { GraduationCap, HardDrive, ClipboardList, Users, Workflow, Link2, Shield, KeyRound, Boxes } from "lucide-react"
 import { Card, Badge } from "../ui"
 import { ScreenHeader, LoanStateBadge } from "./common"
-import { LOAN_DAYS, DUE_SOON_DAYS } from "../lib"
+import { LOAN_DAYS, DUE_SOON_DAYS, CABINS } from "../lib"
 
 // ============================================================
 // PROJECT STRUCTURE — a read-only reference of the data model.
@@ -98,7 +98,8 @@ const STUDENTS = [
 
 const DEVICES = [
   [<C>id</C>, "uuid", <span><Badge tone="navy">PK</Badge> <span className="ml-1">Generated. Loans reference this, not the serial.</span></span>],
-  [<C>lnb</C>, "text", <span><Badge tone="neutral">unique</Badge> <span className="ml-1">Asset number IT uses day to day, e.g. <C>LNB-0166</C>. Shown first wherever a device is named.</span></span>],
+  [<C>lnb</C>, "text", <span><Badge tone="neutral">unique</Badge> <span className="ml-1">Asset number IT uses day to day, e.g. <C>LNB-0166</C>. Present only on loan laptops — its presence is what makes a device loanable.</span></span>],
+  [<C>cabin</C>, "text", <span><C>yr3_5</C> · <C>yr6_7</C> · <C>yr8_9</C> (checked). Which cabin the loan laptop lives in. Null until the cabin CSV is imported.</span>],
   [<C>host_name</C>, "text", <span>e.g. <C>SL-21816</C> — the machine name, which encodes the student ID for 1:1 assigned laptops.</span>],
   [<C>serial_number</C>, "text", <span><Badge tone="neutral">unique</Badge> <span className="ml-1">The import key — devices are upserted by serial.</span></span>],
   [<C>model</C>, "text", "From the CSV."],
@@ -123,7 +124,8 @@ const LOANS = [
   [<C>returned_at</C>, "timestamptz", "Null while the loan is active."],
   [<C>renewed_count</C>, "integer", "Incremented on every renewal."],
   [<C>status</C>, "text", <span><C>active</C> · <C>returned</C> (checked).</span>],
-  [<C>issued_by</C>, "uuid", <span>→ <C>auth.users</C>. Who handed it out.</span>],
+  [<C>issued_by</C>, "uuid", <span>→ <C>auth.users</C>. The signed-in account that recorded the issue.</span>],
+  [<C>handed_over_by</C>, "text", <span>The named cabin custodian who physically passed the laptop over, e.g. <C>Rudi</C>. Chosen at issue time — not an <C>auth.users</C> reference.</span>],
   [<C>returned_by</C>, "uuid", <span>→ <C>auth.users</C>. Who took it back.</span>],
   [<C>renewed_by</C>, "uuid", <span>→ <C>auth.users</C>. Who extended it.</span>],
   [<C>reminder_sent_at</C>, "timestamptz", <span className="text-muted">Reserved — for the overdue-email phase. Cleared on renewal.</span>],
@@ -138,13 +140,17 @@ const STAFF = [
   [<C>created_at</C>, "timestamptz", "Defaults to now()."],
 ]
 
+// The three physical cabins. Source of truth is CABINS in src/lib.js — the
+// mapping is code, not data, so only devices.cabin lives in the database.
+const CABIN_ROWS = CABINS.map(c => [<C>{c.key}</C>, c.label, c.staff.join(" · ")])
+
 // --- lifecycle --------------------------------------------------------------
 
 const LIFECYCLE = [
   [
     <span className="font-semibold text-navy">1 · Import</span>,
     "Import tab (CSV)",
-    <span>Upserts <C>students</C> by ID and <C>devices</C> by serial, then opens an active <C>loans</C> row for each student–device pair and sets those devices to <C>on_loan</C>. Re-running updates rather than duplicates.</span>,
+    <span>Upserts <C>students</C> by ID and <C>devices</C> by serial, then opens an active <C>loans</C> row for each student–device pair and sets those devices to <C>on_loan</C>. Re-running updates rather than duplicates. A second uploader sets <C>devices.cabin</C> from an LNB/Cabin file, creating any LNB it hasn't seen.</span>,
   ],
   [
     <span className="font-semibold text-navy">2 · Look up</span>,
@@ -154,7 +160,7 @@ const LIFECYCLE = [
   [
     <span className="font-semibold text-navy">3 · Issue</span>,
     "Loan Portal → Issue a laptop",
-    <span>Inserts <C>loans</C> with <C>status=active</C> and <C>due_at = now + {LOAN_DAYS}d</C>, then sets <C>devices.status = on_loan</C>.</span>,
+    <span>Inserts <C>loans</C> with <C>status=active</C>, <C>due_at = now + {LOAN_DAYS}d</C> and the chosen <C>handed_over_by</C>, then sets <C>devices.status = on_loan</C>. Only LNB laptops can be issued.</span>,
   ],
   [
     <span className="font-semibold text-navy">4 · Renew</span>,
@@ -181,6 +187,7 @@ const GUARDS = [
   [<span>Serial is unique</span>, <span>Unique constraint on <C>devices.serial_number</C></span>, "Makes the CSV import idempotent."],
   [<span>LNB is unique</span>, <span>Partial unique index <C>devices_lnb_key</C></span>, "Nulls allowed for legacy rows with no LNB yet."],
   [<span>Status stays valid</span>, <span>Check constraints on <C>devices.status</C> and <C>loans.status</C></span>, "Only the listed values can be stored."],
+  [<span>Cabin stays valid</span>, <span>Check constraint on <C>devices.cabin</C></span>, "A typo in the cabin CSV is rejected by the database, not silently stored."],
   [<span>Nothing is truly deleted</span>, <span><C>archived</C> flag on students and devices</span>, "Soft delete keeps the loan trail complete."],
 ]
 
@@ -267,6 +274,16 @@ export default function ProjectStructure({ data }) {
         </div>
       </Section>
 
+      <Section
+        icon={Boxes}
+        title="Cabins"
+        hint="The three cupboards loan laptops live in. Only the key is stored on a device — the label and staff names come from CABINS in src/lib.js."
+      >
+        <Card className="px-4 pb-1">
+          <Table head={["Key", "Cabin", "IT staff"]} rows={CABIN_ROWS} minWidth={480} />
+        </Card>
+      </Section>
+
       <Section icon={Link2} title="Relationships">
         <Card className="px-4 pb-1">
           <Table head={["Between", "Cardinality", "Meaning", "On delete"]} rows={RELATIONSHIPS} minWidth={680} />
@@ -292,7 +309,7 @@ export default function ProjectStructure({ data }) {
       </Section>
 
       <p className="text-xs text-muted pt-1">
-        Mirrors <C>supabase/migrations/0001</C>–<C>0004</C> and <C>src/actions.js</C>. Update this screen whenever a migration lands.
+        Mirrors <C>supabase/migrations/0001</C>–<C>0005</C> and <C>src/actions.js</C>. Update this screen whenever a migration lands.
       </p>
     </div>
   )

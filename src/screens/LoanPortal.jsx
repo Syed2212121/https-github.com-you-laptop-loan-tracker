@@ -1,11 +1,14 @@
 import React, { useState, useMemo } from "react"
 import {
   Laptop, CheckCircle2, AlertTriangle, RotateCcw, CornerUpLeft,
-  Clock, History, Loader2, Users,
+  Clock, History, Loader2, Users, ChevronLeft,
 } from "lucide-react"
-import { Button, Card, Modal, Badge, Input, EmptyState } from "../ui"
+import { Button, Card, Modal, Badge, Input, Label, EmptyState } from "../ui"
 import { LoanStateBadge, FieldRow, SearchSelect, ScreenHeader } from "./common"
-import { displayName, fmtDate, splitClassForm, activeLoanForStudent, loanState } from "../lib"
+import {
+  displayName, fmtDate, splitClassForm, activeLoanForStudent, loanState,
+  cabinByKey, ALL_CABIN_STAFF, isLoanDevice,
+} from "../lib"
 import { issueLoan, returnLoan, renewLoan } from "../actions"
 
 export default function LoanPortal({ data, refresh, session }) {
@@ -42,10 +45,15 @@ export default function LoanPortal({ data, refresh, session }) {
     catch (e) { setError(e.message || "Renew failed") }
     finally { setBusy(false) }
   }
-  const doIssue = async (device) => {
+  const doIssue = async (device, handedOverBy) => {
     setBusy(true); setError("")
     try {
-      await issueLoan({ studentId: student.student_id, deviceId: device.id, userId: session?.user?.id })
+      await issueLoan({
+        studentId: student.student_id,
+        deviceId: device.id,
+        userId: session?.user?.id,
+        handedOverBy,
+      })
       await refresh()
       setIssuing(false)
     } catch (e) {
@@ -140,6 +148,7 @@ export default function LoanPortal({ data, refresh, session }) {
                             ? <span>· Returned {fmtDate(loan.returned_at)}</span>
                             : <span>· Due {fmtDate(loan.due_at)}</span>}
                           {loan.renewed_count > 0 && <span>· Renewed ×{loan.renewed_count}</span>}
+                          {loan.handed_over_by && <span>· By {loan.handed_over_by}</span>}
                         </div>
                       </div>
                       <LoanStateBadge loan={loan} />
@@ -154,7 +163,7 @@ export default function LoanPortal({ data, refresh, session }) {
 
       {/* Issue device picker */}
       <Modal open={issuing} onClose={() => setIssuing(false)} title={`Issue a laptop · ${student ? displayName(student) : ""}`} wide>
-        <DevicePicker devices={data.devices} busy={busy} onPick={doIssue} />
+        <DevicePicker devices={data.devices} busy={busy} onIssue={doIssue} />
       </Modal>
     </div>
   )
@@ -189,12 +198,18 @@ function ActiveLoanPanel({ loan, device, busy, onReturn, onRenew }) {
   )
 }
 
-function DevicePicker({ devices, busy, onPick }) {
+// Two steps: choose an available loan laptop, then record which cabin
+// custodian is handing it over. Only LNB laptops are loanable — the devices
+// table also holds the CSV-imported student laptops.
+function DevicePicker({ devices, busy, onIssue }) {
   const [q, setQ] = useState("")
+  const [chosen, setChosen] = useState(null)
+  const [staff, setStaff] = useState("")
+
   const available = useMemo(() => {
     const query = q.trim().toLowerCase()
     return devices
-      .filter(d => d.status === "available" && !d.archived)
+      .filter(d => isLoanDevice(d) && d.status === "available")
       .filter(d => !query
         || (d.lnb || "").toLowerCase().includes(query)
         || (d.host_name || "").toLowerCase().includes(query)
@@ -202,24 +217,91 @@ function DevicePicker({ devices, busy, onPick }) {
       .slice(0, 50)
   }, [devices, q])
 
+  // Step 2 — who is handing it over.
+  if (chosen) {
+    const cabin = cabinByKey(chosen.cabin)
+    // No cabin recorded yet → let any custodian be credited.
+    const options = cabin ? cabin.staff : ALL_CABIN_STAFF
+
+    return (
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => { setChosen(null); setStaff("") }}
+          className="inline-flex items-center gap-1 text-xs text-muted hover:text-ink -mt-1"
+        >
+          <ChevronLeft size={14} /> Choose a different laptop
+        </button>
+
+        <div className="flex items-center gap-3 px-3.5 py-3 rounded-lg border border-navy/25 bg-navy/[0.03]">
+          <Laptop size={18} className="text-navy shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-ink truncate">{chosen.lnb}</div>
+            <div className="text-xs text-muted truncate">
+              {[cabin?.label, chosen.host_name, chosen.model].filter(Boolean).join(" · ") || "No cabin assigned"}
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <Label>Handed over by</Label>
+          <div className="grid grid-cols-2 gap-2">
+            {options.map(name => (
+              <button
+                key={name}
+                type="button"
+                onClick={() => setStaff(name)}
+                className={`px-3.5 py-2.5 rounded-lg border text-sm font-medium text-left transition-colors ${
+                  staff === name
+                    ? "border-navy bg-navy text-white"
+                    : "border-line bg-white text-ink hover:border-navy/40 hover:bg-panel"
+                }`}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+          {!cabin && (
+            <p className="text-xs text-muted mt-2">
+              This laptop has no cabin recorded yet, so all IT staff are listed.
+            </p>
+          )}
+        </div>
+
+        <Button
+          size="lg"
+          className="w-full"
+          disabled={!staff || busy}
+          onClick={() => onIssue(chosen, staff)}
+        >
+          {busy ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+          Issue {chosen.lnb}
+        </Button>
+      </div>
+    )
+  }
+
+  // Step 1 — pick the laptop.
   return (
     <div className="space-y-3">
-      <Input label="Find an available device" value={q} onChange={setQ} placeholder="LNB, device name, or model" autoFocus />
+      <Input label="Find an available loan laptop" value={q} onChange={setQ} placeholder="LNB, device name, or model" autoFocus />
       {available.length === 0 ? (
-        <div className="text-sm text-muted text-center py-6">No available devices match. Free one up by processing a return, or import your inventory.</div>
+        <div className="text-sm text-muted text-center py-6">No available loan laptops match. Free one up by processing a return, or import your inventory.</div>
       ) : (
         <div className="max-h-80 overflow-y-auto -mx-1 px-1 space-y-1.5">
           {available.map(d => (
             <button
               key={d.id}
-              onClick={() => onPick(d)}
+              onClick={() => setChosen(d)}
               disabled={busy}
               className="w-full flex items-center gap-3 px-3.5 py-3 rounded-lg border border-line hover:border-navy/40 hover:bg-panel text-left disabled:opacity-50"
             >
               <Laptop size={18} className="text-navy shrink-0" />
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-ink truncate">{d.lnb || d.host_name || "Device"}</div>
-                <div className="text-xs text-muted truncate">{[d.host_name, d.model].filter(Boolean).join(" · ")}</div>
+                <div className="text-sm font-medium text-ink truncate">{d.lnb}</div>
+                <div className="text-xs text-muted truncate">
+                  {[cabinByKey(d.cabin)?.label, d.host_name, d.model].filter(Boolean).join(" · ")}
+                </div>
               </div>
               <Badge tone="ok">Available</Badge>
             </button>

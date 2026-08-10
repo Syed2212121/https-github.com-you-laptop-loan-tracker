@@ -3,7 +3,9 @@ import { addDays, LOAN_DAYS } from "./lib"
 
 // Issue a laptop: create an active loan + mark the device on_loan.
 // The DB partial unique indexes also guard against a double-issue race.
-export async function issueLoan({ studentId, deviceId, userId, notes }) {
+// `userId` is the logged-in account; `handedOverBy` is the named cabin
+// custodian who physically passed the laptop over.
+export async function issueLoan({ studentId, deviceId, userId, handedOverBy, notes }) {
   const issued_at = new Date().toISOString()
   const due_at = addDays(new Date(), LOAN_DAYS).toISOString()
   const { data: loan, error } = await supabase
@@ -12,6 +14,7 @@ export async function issueLoan({ studentId, deviceId, userId, notes }) {
       student_id: studentId,
       device_id: deviceId,
       issued_by: userId || null,
+      handed_over_by: handedOverBy || null,
       issued_at,
       due_at,
       status: "active",
