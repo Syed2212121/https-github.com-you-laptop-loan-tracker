@@ -98,7 +98,7 @@ export default function App() {
       <header className="sticky top-0 z-30 bg-navy text-white">
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <button onClick={() => setTab("home")} className="flex items-center gap-2.5">
-            <img src="/logo.jpg" alt="" className="w-8 h-8 rounded-md object-contain bg-white p-0.5" />
+            <img src="/logo.png" alt="" className="h-9 w-auto rounded-md object-contain bg-white px-1.5 py-1" />
             <div className="text-left leading-tight">
               <div className="font-serif text-[15px]">Al-Taqwa College</div>
               <div className="text-[9px] uppercase tracking-[0.2em] text-white/60">Laptop Loans</div>
