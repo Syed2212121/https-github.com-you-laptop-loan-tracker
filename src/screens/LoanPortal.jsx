@@ -6,7 +6,7 @@ import {
 import { Button, Card, Modal, Badge, Input, Label, EmptyState } from "../ui"
 import { LoanStateBadge, FieldRow, SearchSelect, ScreenHeader } from "./common"
 import {
-  displayName, fmtDate, splitClassForm, activeLoanForStudent, loanState,
+  displayName, fmtDate, splitClassForm, activeLoanLaptopFor, loanState,
   cabinByKey, ALL_CABIN_STAFF, isLoanDevice,
 } from "../lib"
 import { issueLoan, returnLoan, renewLoan } from "../actions"
@@ -25,13 +25,21 @@ export default function LoanPortal({ data, refresh, session }) {
   // Class value: use stored class when a form column is present, else split "4I".
   const cls = student ? (student.form ? (student.class || "") : splitClassForm(student.class).class) : ""
 
-  const activeLoan = student ? activeLoanForStudent(data.loans, student.student_id) : null
+  // Only a loan laptop makes a student ineligible. Their own assigned SL
+  // laptop is not a loan and never blocks borrowing.
+  const activeLoan = student ? activeLoanLaptopFor(data, student.student_id) : null
   const eligible = student && !activeLoan
-  const history = useMemo(
-    () => student ? data.loans.filter(l => l.student_id === student.student_id) : [],
-    [student, data.loans]
-  )
   const deviceOf = (loan) => data.devices.find(d => d.id === loan.device_id)
+
+  // Loan history means loan laptops only — never the student's own SL device.
+  const history = useMemo(
+    () => student
+      ? data.loans.filter(l =>
+          l.student_id === student.student_id &&
+          isLoanDevice(data.devices.find(d => d.id === l.device_id) || {}))
+      : [],
+    [student, data.loans, data.devices]
+  )
 
   const doReturn = async (loan) => {
     setBusy(true); setError("")
@@ -212,7 +220,7 @@ function DevicePicker({ devices, busy, onIssue }) {
       .filter(d => isLoanDevice(d) && d.status === "available")
       .filter(d => !query
         || (d.lnb || "").toLowerCase().includes(query)
-        || (d.host_name || "").toLowerCase().includes(query)
+        || (d.serial_number || "").toLowerCase().includes(query)
         || (d.model || "").toLowerCase().includes(query))
       .slice(0, 50)
   }, [devices, q])
@@ -236,9 +244,12 @@ function DevicePicker({ devices, busy, onIssue }) {
         <div className="flex items-center gap-3 px-3.5 py-3 rounded-lg border border-navy/25 bg-navy/[0.03]">
           <Laptop size={18} className="text-navy shrink-0" />
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-ink truncate">{chosen.lnb}</div>
+            <div className="text-sm font-medium text-ink truncate">
+              {chosen.lnb}
+              {chosen.serial_number && <span className="text-muted font-normal"> · {chosen.serial_number}</span>}
+            </div>
             <div className="text-xs text-muted truncate">
-              {[cabin?.label, chosen.host_name, chosen.model].filter(Boolean).join(" · ") || "No cabin assigned"}
+              {[cabin?.label, chosen.model].filter(Boolean).join(" · ") || "No cabin assigned"}
             </div>
           </div>
         </div>
@@ -284,9 +295,12 @@ function DevicePicker({ devices, busy, onIssue }) {
   // Step 1 — pick the laptop.
   return (
     <div className="space-y-3">
-      <Input label="Find an available loan laptop" value={q} onChange={setQ} placeholder="LNB, device name, or model" autoFocus />
+      <Input label="Find an available loan laptop" value={q} onChange={setQ} placeholder="LNB, serial, or model" autoFocus />
       {available.length === 0 ? (
-        <div className="text-sm text-muted text-center py-6">No available loan laptops match. Free one up by processing a return, or import your inventory.</div>
+        <div className="text-sm text-muted text-center py-6">
+          No available loan laptops match. Only LNB laptops can be issued — a student's own
+          SL laptop is never loaned. Free one up by processing a return, or import your inventory.
+        </div>
       ) : (
         <div className="max-h-80 overflow-y-auto -mx-1 px-1 space-y-1.5">
           {available.map(d => (
@@ -298,9 +312,12 @@ function DevicePicker({ devices, busy, onIssue }) {
             >
               <Laptop size={18} className="text-navy shrink-0" />
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-ink truncate">{d.lnb}</div>
+                <div className="text-sm font-medium text-ink truncate">
+                  {d.lnb}
+                  {d.serial_number && <span className="text-muted font-normal"> · {d.serial_number}</span>}
+                </div>
                 <div className="text-xs text-muted truncate">
-                  {[cabinByKey(d.cabin)?.label, d.host_name, d.model].filter(Boolean).join(" · ")}
+                  {[cabinByKey(d.cabin)?.label, d.model].filter(Boolean).join(" · ") || "No cabin assigned"}
                 </div>
               </div>
               <Badge tone="ok">Available</Badge>

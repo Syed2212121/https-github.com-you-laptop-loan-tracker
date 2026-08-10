@@ -140,13 +140,31 @@ export function slId(studentId) {
   return studentId ? `SL-${studentId}` : "—"
 }
 
-// The device currently associated with a student: the one on their active
-// loan, falling back to a device whose host_name matches "SL-<id>". Or null.
+// The SL laptop a student is assigned. Assignment is NOT a loan — an SL laptop
+// is the student's own machine and never goes out on loan.
+export function assignedDeviceFor(data, studentId) {
+  return data.devices.find(d => d.assigned_student_id === studentId) || null
+}
+
+// The student's own device. Prefers the explicit assignment; falls back to a
+// host_name of "SL-<id>" for rows imported before assignment existed.
+//
+// This deliberately does NOT consult loans. It used to, which meant a student
+// holding a loan laptop had that loaner shown as their own device — and it made
+// every CSV-imported holding look like an active loan.
 export function deviceForStudent(data, studentId) {
-  const loan = activeLoanForStudent(data.loans, studentId)
-  if (loan) {
-    const d = data.devices.find(dev => dev.id === loan.device_id)
-    if (d) return d
-  }
-  return data.devices.find(dev => dev.host_name === slId(studentId)) || null
+  return assignedDeviceFor(data, studentId)
+      || data.devices.find(dev => dev.host_name === slId(studentId))
+      || null
+}
+
+// The student's active LOAN LAPTOP loan, ignoring anything that isn't LNB
+// stock. Eligibility keys off this, so a leftover SL row can never make a
+// student ineligible to borrow.
+export function activeLoanLaptopFor(data, studentId) {
+  return data.loans.find(l =>
+    l.student_id === studentId &&
+    l.status === "active" &&
+    isLoanDevice(data.devices.find(d => d.id === l.device_id) || {})
+  ) || null
 }

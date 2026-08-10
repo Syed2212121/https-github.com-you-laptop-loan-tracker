@@ -100,10 +100,11 @@ const DEVICES = [
   [<C>id</C>, "uuid", <span><Badge tone="navy">PK</Badge> <span className="ml-1">Generated. Loans reference this, not the serial.</span></span>],
   [<C>lnb</C>, "text", <span><Badge tone="neutral">unique</Badge> <span className="ml-1">Asset number IT uses day to day, e.g. <C>LNB-0166</C>. Present only on loan laptops — its presence is what makes a device loanable.</span></span>],
   [<C>cabin</C>, "text", <span><C>yr3_5</C> · <C>yr6_7</C> · <C>yr8_9</C> (checked). Which cabin the loan laptop lives in. Null until the cabin CSV is imported.</span>],
-  [<C>host_name</C>, "text", <span>e.g. <C>SL-21816</C> — the machine name, which encodes the student ID for 1:1 assigned laptops.</span>],
+  [<C>host_name</C>, "text", <span>e.g. <C>SL-21816</C> — the machine name. Usually encodes the student ID, but not reliably: of 468 CSV rows, 109 disagree and 73 are blank. Never rely on it to identify the owner.</span>],
+  [<C>assigned_student_id</C>, "text", <span><Badge tone="neutral">FK</Badge> <span className="ml-1">→ <C>students.student_id</C>. The student whose own SL laptop this is. Assignment is <span className="font-semibold">not</span> a loan.</span></span>],
   [<C>serial_number</C>, "text", <span><Badge tone="neutral">unique</Badge> <span className="ml-1">The import key — devices are upserted by serial.</span></span>],
   [<C>model</C>, "text", "From the CSV."],
-  [<C>status</C>, "text", <span><C>available</C> · <C>on_loan</C> · <C>retired</C> (checked). Flipped by issue/return.</span>],
+  [<C>status</C>, "text", <span><C>available</C> · <C>on_loan</C> · <C>retired</C> · <C>assigned</C> (checked). Issue/return flips the first two; SL laptops sit at <C>assigned</C>.</span>],
   [<C>warranty_expiry</C>, "date", <span className="text-muted">Reserved — for the Lenovo API phase.</span>],
   [<C>insurance_status</C>, "text", <span className="text-muted">Reserved — displayed as "Insurance", no source wired.</span>],
   [<C>insurance_log</C>, "text", <span className="text-muted">Reserved — displayed, no source wired.</span>],
@@ -120,7 +121,7 @@ const LOANS = [
   [<C>device_id</C>, "uuid", <span><Badge tone="neutral">FK</Badge> <span className="ml-1">→ <C>devices.id</C>, on delete restrict — a device with history can't be deleted.</span></span>],
   [<C>issued_at</C>, "timestamptz", <span>Start of the {LOAN_DAYS}-day window.</span>],
   [<C>due_at</C>, "timestamptz", <span><C>issued_at</C> + {LOAN_DAYS} days. Reset by each renewal.</span>],
-  [<C>original_issue_date</C>, "date", "The CSV collection date, kept for seeded loans only."],
+  [<C>original_issue_date</C>, "date", <span className="text-muted">Unused since 0006 — the CSV's "Collection Date" belonged to the seeded loans, which are gone. Nothing writes it now.</span>],
   [<C>returned_at</C>, "timestamptz", "Null while the loan is active."],
   [<C>renewed_count</C>, "integer", "Incremented on every renewal."],
   [<C>status</C>, "text", <span><C>active</C> · <C>returned</C> (checked).</span>],
@@ -150,7 +151,7 @@ const LIFECYCLE = [
   [
     <span className="font-semibold text-navy">1 · Import</span>,
     "Import tab (CSV)",
-    <span>Upserts <C>students</C> by ID and <C>devices</C> by serial, then opens an active <C>loans</C> row for each student–device pair and sets those devices to <C>on_loan</C>. Re-running updates rather than duplicates. A second uploader sets <C>devices.cabin</C> from an LNB/Cabin file, creating any LNB it hasn't seen.</span>,
+    <span>Upserts <C>students</C> by ID and <C>devices</C> by serial, writing <C>assigned_student_id</C> and <C>status=assigned</C> on each laptop. <span className="font-semibold">No loans are created</span> — a student's own SL laptop is an assignment. Re-running updates rather than duplicates. A second uploader sets <C>devices.cabin</C> from an LNB/Cabin file, creating any LNB it hasn't seen.</span>,
   ],
   [
     <span className="font-semibold text-navy">2 · Look up</span>,
@@ -175,7 +176,8 @@ const LIFECYCLE = [
 ]
 
 const RELATIONSHIPS = [
-  [<span><C>students</C> → <C>loans</C></span>, "one to many", <span>A student has many loans over time, but only one <C>active</C>.</span>, <C>cascade</C>],
+  [<span><C>students</C> → <C>devices</C></span>, "one to one", <span>Via <C>assigned_student_id</C> — the student's own SL laptop. Permanent, and never a loan.</span>, <C>set null</C>],
+  [<span><C>students</C> → <C>loans</C></span>, "one to many", <span>A student has many loans over time, but only one <C>active</C>. Loan laptops (LNB) only.</span>, <C>cascade</C>],
   [<span><C>devices</C> → <C>loans</C></span>, "one to many", <span>A device has many loans over time, but only one <C>active</C>.</span>, <C>restrict</C>],
   [<span><C>auth.users</C> → <C>staff</C></span>, "one to one", "Only listed users can read or write anything.", <C>cascade</C>],
   [<span><C>auth.users</C> → <C>loans</C></span>, "one to many", <span>Via <C>issued_by</C> / <C>returned_by</C> / <C>renewed_by</C>.</span>, "—"],
@@ -188,6 +190,7 @@ const GUARDS = [
   [<span>LNB is unique</span>, <span>Partial unique index <C>devices_lnb_key</C></span>, "Nulls allowed for legacy rows with no LNB yet."],
   [<span>Status stays valid</span>, <span>Check constraints on <C>devices.status</C> and <C>loans.status</C></span>, "Only the listed values can be stored."],
   [<span>Cabin stays valid</span>, <span>Check constraint on <C>devices.cabin</C></span>, "A typo in the cabin CSV is rejected by the database, not silently stored."],
+  [<span>SL laptops are never loaned</span>, <span>Trigger <C>loans_device_must_be_loanable</C></span>, "A loan may only reference a device with an LNB. The UI enforces this too, but the UI is how 468 bogus loans got in once already."],
   [<span>Nothing is truly deleted</span>, <span><C>archived</C> flag on students and devices</span>, "Soft delete keeps the loan trail complete."],
 ]
 
@@ -309,7 +312,7 @@ export default function ProjectStructure({ data }) {
       </Section>
 
       <p className="text-xs text-muted pt-1">
-        Mirrors <C>supabase/migrations/0001</C>–<C>0005</C> and <C>src/actions.js</C>. Update this screen whenever a migration lands.
+        Mirrors <C>supabase/migrations/0001</C>–<C>0006</C> and <C>src/actions.js</C>. Update this screen whenever a migration lands.
       </p>
     </div>
   )

@@ -3,7 +3,7 @@ import Papa from "papaparse"
 import { Upload, FileText, Users, HardDrive, ClipboardList, CheckCircle2, AlertTriangle, Loader2, ArrowRight, Boxes, RefreshCw, PlusCircle } from "lucide-react"
 import { supabase } from "../supabase"
 import { Card, Button } from "../ui"
-import { parseName, parseAuDate, addDays, splitClassForm, normalizeCabin, LOAN_DAYS } from "../lib"
+import { parseName, splitClassForm, normalizeCabin } from "../lib"
 
 const chunk = (arr, n) => {
   const out = []
@@ -12,10 +12,14 @@ const chunk = (arr, n) => {
 }
 
 // Build a de-duplicated preview from parsed CSV rows.
+//
+// A student holding their own SL laptop is an ASSIGNMENT, not a loan. This used
+// to open an active loan per pair, which consumed each student's one permitted
+// active loan (loans_one_active_per_student) and made it impossible to issue
+// them an LNB loan laptop at all. The link now rides on the device row itself.
 function buildPreview(rows) {
   const students = new Map()
   const devices = new Map()
-  const pairs = []
   let skipped = 0
 
   for (const r of rows) {
@@ -36,27 +40,21 @@ function buildPreview(rows) {
         form: cf.form || null,
       })
     }
+    // First occurrence of a serial wins — one device belongs to one student.
     if (!devices.has(serial)) {
       devices.set(serial, {
         serial_number: serial,
         host_name: (r["Host Name"] || "").trim() || null,
         model: (r["Model"] || "").trim() || null,
+        assigned_student_id: sid,
+        status: "assigned",
       })
     }
-    pairs.push({ student_id: sid, serial, original_issue_date: parseAuDate(r["Collection Date"]) })
-  }
-
-  // One active loan per student and per device → dedupe, keep first occurrence.
-  const seenStu = new Set(), seenDev = new Set(), loanPairs = []
-  for (const p of pairs) {
-    if (seenStu.has(p.student_id) || seenDev.has(p.serial)) continue
-    seenStu.add(p.student_id); seenDev.add(p.serial); loanPairs.push(p)
   }
 
   return {
     students: [...students.values()],
     devices: [...devices.values()],
-    loanPairs,
     skipped,
     total: rows.length,
   }
@@ -92,57 +90,22 @@ export default function Import({ refresh, setTab }) {
     if (!preview) return
     setPhase("importing"); setError("")
     try {
-      // 1) Students
+      // 1) Students first — devices.assigned_student_id references them.
       for (const c of chunk(preview.students, 500)) {
         const { error } = await supabase.from("students").upsert(c, { onConflict: "student_id" })
         if (error) throw error
       }
-      // 2) Devices — upsert and collect ids by serial
-      const serialToId = {}
+      // 2) Devices, carrying their assignment. No loans are created: an SL
+      //    laptop is the student's own machine and is never loaned.
       for (const c of chunk(preview.devices, 500)) {
-        const { data, error } = await supabase.from("devices").upsert(c, { onConflict: "serial_number" }).select("id,serial_number")
-        if (error) throw error
-        for (const d of data) serialToId[d.serial_number] = d.id
-      }
-      // 3) Existing active loans → don't double-issue
-      const { data: act, error: actErr } = await supabase.from("loans").select("student_id,device_id").eq("status", "active")
-      if (actErr) throw actErr
-      const activeStu = new Set(act.map(a => a.student_id))
-      const activeDev = new Set(act.map(a => a.device_id))
-
-      // 4) Build active loans starting a fresh 10-day clock at go-live
-      const issued_at = new Date().toISOString()
-      const due_at = addDays(new Date(), LOAN_DAYS).toISOString()
-      const toInsert = []
-      const deviceIds = []
-      let skippedExisting = 0
-      for (const p of preview.loanPairs) {
-        const did = serialToId[p.serial]
-        if (!did) continue
-        if (activeStu.has(p.student_id) || activeDev.has(did)) { skippedExisting++; continue }
-        toInsert.push({
-          student_id: p.student_id, device_id: did,
-          issued_at, due_at, original_issue_date: p.original_issue_date, status: "active",
-        })
-        deviceIds.push(did)
-        activeStu.add(p.student_id); activeDev.add(did)
-      }
-      // 5) Insert loans
-      for (const c of chunk(toInsert, 500)) {
-        const { error } = await supabase.from("loans").insert(c)
-        if (error) throw error
-      }
-      // 6) Mark those devices on_loan
-      for (const c of chunk(deviceIds, 300)) {
-        const { error } = await supabase.from("devices").update({ status: "on_loan" }).in("id", c)
+        const { error } = await supabase.from("devices").upsert(c, { onConflict: "serial_number" })
         if (error) throw error
       }
 
       setResults({
         students: preview.students.length,
         devices: preview.devices.length,
-        loans: toInsert.length,
-        skippedExisting,
+        assignments: preview.devices.filter(d => d.assigned_student_id).length,
         skipped: preview.skipped,
       })
       await refresh()
@@ -160,7 +123,7 @@ export default function Import({ refresh, setTab }) {
       <div>
         <p className="text-[10px] uppercase tracking-[0.3em] text-navy-accent mb-1.5">Setup</p>
         <h1 className="font-serif text-3xl sm:text-4xl text-navy leading-tight">Import CSV</h1>
-        <p className="text-sm text-muted mt-1">Load students, devices and current holdings from your <span className="font-medium">LWT_SL</span> export.</p>
+        <p className="text-sm text-muted mt-1">Load students and their assigned laptops from your <span className="font-medium">LWT_SL</span> export.</p>
       </div>
 
       <div className="flex items-center gap-3">
@@ -173,7 +136,7 @@ export default function Import({ refresh, setTab }) {
         <div className="border-2 border-dashed border-line rounded-2xl p-8 text-center hover:border-navy/30 cursor-pointer transition-colors bg-white">
           <Upload size={28} className="mx-auto text-navy mb-2" />
           <div className="text-sm font-medium text-ink">{fileName || "Choose a CSV file"}</div>
-          <div className="text-xs text-muted mt-1">Expects columns: Student ID, Student Name, Student Yr., Host Name, Device SN, Model, Collection Date</div>
+          <div className="text-xs text-muted mt-1">Expects columns: Student ID, Student Name, Student Yr., Host Name, Device SN, Model</div>
           <input type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
         </div>
       </label>
@@ -190,12 +153,12 @@ export default function Import({ refresh, setTab }) {
           <div className="grid grid-cols-3 gap-3">
             <PreviewStat icon={Users} label="Students" value={preview.students.length} />
             <PreviewStat icon={HardDrive} label="Devices" value={preview.devices.length} />
-            <PreviewStat icon={ClipboardList} label="Active loans" value={preview.loanPairs.length} />
+            <PreviewStat icon={ClipboardList} label="Assignments" value={preview.devices.filter(d => d.assigned_student_id).length} />
           </div>
           <Card className="p-4 text-xs text-muted space-y-1">
             <div className="flex items-center gap-2"><FileText size={14} /> {preview.total} rows read from <span className="font-medium text-ink">{fileName}</span></div>
             {preview.skipped > 0 && <div className="text-warn">{preview.skipped} row(s) skipped (missing Student ID or serial).</div>}
-            <div>Seeded loans start a fresh {LOAN_DAYS}-day window from today. Students/devices already loaded are updated, not duplicated.</div>
+            <div>Each laptop is recorded as <span className="font-medium text-ink">assigned</span> to its student — not as a loan. SL laptops are never loaned, so this leaves every student free to borrow an LNB laptop. Students/devices already loaded are updated, not duplicated.</div>
           </Card>
           <div className="flex gap-2">
             <Button variant="secondary" onClick={reset} className="flex-1">Choose another</Button>
@@ -219,8 +182,7 @@ export default function Import({ refresh, setTab }) {
             <ul className="text-sm text-ink space-y-1.5">
               <li className="flex justify-between"><span className="text-muted">Students loaded/updated</span><span className="font-semibold tabular-nums">{results.students}</span></li>
               <li className="flex justify-between"><span className="text-muted">Devices loaded/updated</span><span className="font-semibold tabular-nums">{results.devices}</span></li>
-              <li className="flex justify-between"><span className="text-muted">Active loans created</span><span className="font-semibold tabular-nums">{results.loans}</span></li>
-              {results.skippedExisting > 0 && <li className="flex justify-between"><span className="text-muted">Already on loan (kept)</span><span className="font-semibold tabular-nums">{results.skippedExisting}</span></li>}
+              <li className="flex justify-between"><span className="text-muted">Laptops assigned to students</span><span className="font-semibold tabular-nums">{results.assignments}</span></li>
               {results.skipped > 0 && <li className="flex justify-between"><span className="text-muted">Rows skipped</span><span className="font-semibold tabular-nums text-warn">{results.skipped}</span></li>}
             </ul>
           </Card>
