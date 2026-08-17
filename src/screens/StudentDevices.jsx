@@ -86,7 +86,16 @@ export default function StudentDevices({ data }) {
           </div>
 
           {!device && (
-            expectsDevice ? (
+            // A cabin custodian cannot read the student SL fleet at all, so
+            // every student would otherwise look like a missing-laptop case.
+            data.cabin ? (
+              <Card className="p-4">
+                <div className="flex items-start gap-2 text-sm text-muted">
+                  <HardDrive size={16} className="shrink-0 mt-0.5" />
+                  <span>Student laptops are not visible to cabin staff. This says nothing about whether this student has one — ask IT if you need to check.</span>
+                </div>
+              </Card>
+            ) : expectsDevice ? (
               <Card className="p-4 border-warn/30 bg-warn/5">
                 <div className="flex items-start gap-2 text-sm">
                   <AlertTriangle size={16} className="shrink-0 mt-0.5 text-warn" />

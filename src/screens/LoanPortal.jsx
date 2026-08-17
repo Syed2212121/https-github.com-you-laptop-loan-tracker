@@ -124,6 +124,7 @@ export default function LoanPortal({ data, refresh, session }) {
                   busy={busy}
                   onReturn={() => doReturn(activeLoan)}
                   onRenew={() => doRenew(activeLoan)}
+                  canAct={!data.cabin || deviceOf(activeLoan)?.cabin === data.cabin}
                 />
               )}
             </div>
@@ -172,13 +173,16 @@ export default function LoanPortal({ data, refresh, session }) {
 
       {/* Issue device picker */}
       <Modal open={issuing} onClose={() => setIssuing(false)} title={`Issue a laptop · ${student ? displayName(student) : ""}`} wide>
-        <DevicePicker devices={data.devices} busy={busy} onIssue={doIssue} />
+        <DevicePicker devices={data.devices} busy={busy} onIssue={doIssue} myCabin={data.cabin} />
       </Modal>
     </div>
   )
 }
 
-function ActiveLoanPanel({ loan, device, busy, onReturn, onRenew }) {
+// `canAct` is false for a cabin custodian looking at a loan from someone
+// else's cupboard. The "loans update" policy in 0008 would reject it anyway;
+// this turns a permissions error into an explanation.
+function ActiveLoanPanel({ loan, device, busy, onReturn, onRenew, canAct = true }) {
   const { state } = loanState(loan)
   const tone = state === "overdue" ? "alert" : state === "due_soon" ? "warn" : "navy"
   return (
@@ -195,14 +199,24 @@ function ActiveLoanPanel({ loan, device, busy, onReturn, onRenew }) {
         {device?.host_name && <span>{device.host_name} · </span>}
         Due {fmtDate(loan.due_at)}
       </div>
-      <div className="flex gap-2 mt-3">
-        <Button variant="primary" className="flex-1" onClick={onReturn} disabled={busy}>
-          {busy ? <Loader2 size={16} className="animate-spin" /> : <CornerUpLeft size={16} />} Return
-        </Button>
-        <Button variant="secondary" className="flex-1" onClick={onRenew} disabled={busy}>
-          <RotateCcw size={16} /> Renew 10d
-        </Button>
-      </div>
+      {canAct ? (
+        <div className="flex gap-2 mt-3">
+          <Button variant="primary" className="flex-1" onClick={onReturn} disabled={busy}>
+            {busy ? <Loader2 size={16} className="animate-spin" /> : <CornerUpLeft size={16} />} Return
+          </Button>
+          <Button variant="secondary" className="flex-1" onClick={onRenew} disabled={busy}>
+            <RotateCcw size={16} /> Renew 10d
+          </Button>
+        </div>
+      ) : (
+        <p className="text-xs text-muted mt-3 flex items-start gap-1.5">
+          <AlertTriangle size={13} className="shrink-0 mt-0.5 text-warn" />
+          <span>
+            This laptop belongs to {cabinByKey(device?.cabin)?.label || "another cabin"}, so it has
+            to be returned there. You can still see the loan.
+          </span>
+        </p>
+      )}
     </div>
   )
 }
@@ -210,7 +224,14 @@ function ActiveLoanPanel({ loan, device, busy, onReturn, onRenew }) {
 // Two steps: choose an available loan laptop, then record which cabin
 // custodian is handing it over. Only LNB laptops are loanable — the devices
 // table also holds the CSV-imported student laptops.
-function DevicePicker({ devices, busy, onIssue }) {
+//
+// `myCabin` is set for a cabin custodian, who may only lend out of their own
+// cupboard. The same rule is enforced by the "loans insert" policy in 0008;
+// filtering here just means they are never offered a laptop the database
+// would refuse. Custodians still READ every loan laptop, because eligibility
+// is decided by matching a student's active loan to its device and a laptop
+// they could not see would let that student borrow a second one.
+function DevicePicker({ devices, busy, onIssue, myCabin }) {
   const [q, setQ] = useState("")
   const [chosen, setChosen] = useState(null)
   const [staff, setStaff] = useState("")
@@ -219,12 +240,13 @@ function DevicePicker({ devices, busy, onIssue }) {
     const query = q.trim().toLowerCase()
     return devices
       .filter(d => isLoanDevice(d) && d.status === "available")
+      .filter(d => !myCabin || d.cabin === myCabin)
       .filter(d => !query
         || (d.lnb || "").toLowerCase().includes(query)
         || (d.serial_number || "").toLowerCase().includes(query)
         || (d.model || "").toLowerCase().includes(query))
       .slice(0, 50)
-  }, [devices, q])
+  }, [devices, q, myCabin])
 
   // Step 2 — who is handing it over.
   if (chosen) {
@@ -299,8 +321,18 @@ function DevicePicker({ devices, busy, onIssue }) {
       <Input label="Find an available loan laptop" value={q} onChange={setQ} placeholder="LNB, serial, or model" autoFocus />
       {available.length === 0 ? (
         <div className="text-sm text-muted text-center py-6">
-          No available loan laptops match. Only LNB laptops can be issued — a student's own
-          SL laptop is never loaned. Free one up by processing a return, or import your inventory.
+          {myCabin ? (
+            <>
+              No available loan laptops in {cabinByKey(myCabin)?.label || "your cabin"}. You can
+              only lend from your own cupboard — free one up by processing a return, or ask IT
+              if a laptop is missing its cabin.
+            </>
+          ) : (
+            <>
+              No available loan laptops match. Only LNB laptops can be issued — a student's own
+              SL laptop is never loaned. Free one up by processing a return, or import your inventory.
+            </>
+          )}
         </div>
       ) : (
         <div className="max-h-80 overflow-y-auto -mx-1 px-1 space-y-1.5">

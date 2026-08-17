@@ -3,7 +3,7 @@ import { GraduationCap, HardDrive, Users, ClipboardList, Upload, Network, LogOut
 import { supabase, fetchAll } from "./supabase"
 import LoginScreen from "./LoginScreen"
 import BottomNav from "./BottomNav"
-import { loanState } from "./lib"
+import { loanState, cabinByKey } from "./lib"
 import Home from "./screens/Home"
 import StudentDevices from "./screens/StudentDevices"
 import LoanDevices from "./screens/LoanDevices"
@@ -17,7 +17,7 @@ import ProjectStructure from "./screens/ProjectStructure"
 // ============================================================
 function useAppData(session) {
   const [loading, setLoading] = useState(true)
-  const [data, setData] = useState({ students: [], devices: [], loans: [], isAdmin: false })
+  const [data, setData] = useState({ students: [], devices: [], loans: [], isAdmin: false, cabin: null })
 
   const load = useCallback(async () => {
     if (!session) return
@@ -37,6 +37,9 @@ function useAppData(session) {
       devices: devices.data || [],
       loans: loans.data || [],
       isAdmin: me?.is_admin || false,
+      // Cabin custodians are scoped to one cupboard: read-only inventory, and
+      // they may only lend the laptops in their own cabin. Null = full staff.
+      cabin: me?.cabin || null,
     })
     setLoading(false)
   }, [session])
@@ -76,6 +79,10 @@ export default function App() {
   }
   if (!session) return <LoginScreen />
 
+  // Cabin custodians have read-only inventory, so the importers would only
+  // fail against RLS. Hide them rather than offer a button that errors.
+  const myCabin = cabinByKey(app.data.cabin)
+
   const navItems = [
     { key: "studentDevices", label: "Students", icon: GraduationCap },
     { key: "loanDevices", label: "Devices", icon: HardDrive },
@@ -86,7 +93,7 @@ export default function App() {
   // so the mobile bottom bar stays on the four daily tasks.
   const topNav = [
     ...navItems,
-    { key: "import", label: "Import", icon: Upload },
+    ...(myCabin ? [] : [{ key: "import", label: "Import", icon: Upload }]),
     { key: "structure", label: "Structure", icon: Network },
   ]
 
@@ -123,9 +130,18 @@ export default function App() {
             ))}
           </nav>
 
-          <button onClick={signOut} className="text-white/70 hover:text-white p-2 -mr-2" title="Sign out">
-            <LogOut size={18} />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Which cupboard this account looks after — the one thing that
+                explains why the laptop list is shorter than they expect. */}
+            {myCabin && (
+              <span className="hidden sm:inline text-[10px] uppercase tracking-[0.15em] text-white/70 border border-white/25 rounded-full px-2.5 py-1">
+                {myCabin.label}
+              </span>
+            )}
+            <button onClick={signOut} className="text-white/70 hover:text-white p-2 -mr-2" title="Sign out">
+              <LogOut size={18} />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -140,7 +156,7 @@ export default function App() {
             {tab === "loanDevices" && <LoanDevices {...screenProps} />}
             {tab === "staffDevices" && <StaffDevices {...screenProps} />}
             {tab === "loanPortal" && <LoanPortal {...screenProps} />}
-            {tab === "import" && <Import {...screenProps} />}
+            {tab === "import" && !myCabin && <Import {...screenProps} />}
             {tab === "structure" && <ProjectStructure {...screenProps} />}
           </>
         )}
