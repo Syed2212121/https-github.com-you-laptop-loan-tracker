@@ -38,6 +38,18 @@ export function FieldRow({ label, value }) {
   )
 }
 
+// A titled panel for the fixed read-only detail layouts: header strip + FieldRows.
+export function SectionCard({ title, children }) {
+  return (
+    <Card className="overflow-hidden">
+      <div className="px-5 py-2.5 border-b border-line bg-panel/60">
+        <span className="text-[11px] uppercase tracking-[0.18em] text-muted">{title}</span>
+      </div>
+      <div className="px-5 py-2">{children}</div>
+    </Card>
+  )
+}
+
 // Reusable search box with a live suggestions dropdown (partial match).
 //   items       – array to search
 //   filter      – (item, query) => boolean

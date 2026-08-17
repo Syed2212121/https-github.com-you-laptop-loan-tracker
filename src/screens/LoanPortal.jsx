@@ -7,7 +7,7 @@ import { Button, Card, Modal, Badge, Input, Label, EmptyState } from "../ui"
 import { LoanStateBadge, FieldRow, SearchSelect, ScreenHeader } from "./common"
 import {
   displayName, fmtDate, splitClassForm, activeLoanLaptopFor, loanState,
-  cabinByKey, ALL_CABIN_STAFF, isLoanDevice,
+  cabinByKey, ALL_CABIN_STAFF, isLoanDevice, yearLevelLabel,
 } from "../lib"
 import { issueLoan, returnLoan, renewLoan } from "../actions"
 
@@ -80,7 +80,7 @@ export default function LoanPortal({ data, refresh, session }) {
         getKey={(s) => s.student_id}
         getPrimary={(s) => s.student_id}
         getSecondary={(s) => displayName(s)}
-        getMeta={(s) => s.class || ""}
+        getMeta={(s) => s.form || yearLevelLabel(s.class)}
         onSelect={(s) => { setStudent(s); setError("") }}
         placeholder="Search Student ID or name"
         autoFocus
@@ -104,7 +104,8 @@ export default function LoanPortal({ data, refresh, session }) {
               <div className="min-w-0">
                 <FieldRow label="Student ID" value={student.student_id} />
                 <FieldRow label="Student Name" value={displayName(student)} />
-                <FieldRow label="Student Class" value={cls} />
+                <FieldRow label="Year Level" value={yearLevelLabel(cls)} />
+                <FieldRow label="Form" value={student.form || splitClassForm(student.class).form} />
               </div>
               {eligible
                 ? <Badge tone="ok"><CheckCircle2 size={13} /> Eligible</Badge>

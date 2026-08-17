@@ -79,6 +79,10 @@ export function activeLoanForStudent(loans, studentId) {
 }
 
 // Parse a "Last, First" name into parts. Handles blanks and single-token names.
+//
+// Unused since the roster import landed — the SIMS "Current Student List" gives
+// given name and surname as separate columns, so there is nothing to parse. Kept
+// for the next import that arrives with names in one field.
 export function parseName(raw) {
   const s = (raw || "").trim()
   if (!s) return { first_name: "", last_name: "", full_name: "" }
@@ -135,9 +139,147 @@ export function splitClassForm(raw) {
   return { class: m[1], form: (m[2] || "").trim() }
 }
 
+// Recombine class + form back into the SIMS "Student Yr." style, e.g. "4I".
+// Inverse of splitClassForm. Prep (class "0") with no form reads "0".
+export function classFormLabel(cls, form) {
+  return `${String(cls ?? "").trim()}${String(form ?? "").trim()}`
+}
+
 // Display form of a student ID, e.g. "21816" → "SL-21816".
 export function slId(studentId) {
   return studentId ? `SL-${studentId}` : "—"
+}
+
+// Year level 0 is Prep, not "Year 0". Everything else reads as its number.
+export function yearLevelLabel(raw) {
+  const s = String(raw ?? "").trim()
+  if (!s) return ""
+  return s === "0" ? "Prep" : `Year ${s}`
+}
+
+// The SIMS "Year" column is the year a device was issued and decides which row
+// is a student's current laptop. Not all values are numeric: 823 rows read
+// "2020-21", which sits between 2020 and 2023, so it sorts as 2021.
+export function sourceYearNum(raw) {
+  const s = String(raw ?? "").trim()
+  if (s === "2020-21") return 2021
+  return parseInt(s, 10) || 0
+}
+
+// Repair the serial shapes the SIMS export is known to mangle. Only
+// unambiguous fixes are applied — anything needing a human (two serials merged
+// into one cell, or a value Excel turned into a date) is returned untouched and
+// flagged, so the importer can report it rather than silently invent a serial.
+export function cleanSerial(raw) {
+  const s = String(raw ?? "").trim()
+  if (!s) return { value: "", changed: false, suspect: false }
+
+  // Full Lenovo barcode — "1s" + machine type + model + the 8-char serial.
+  if (/^1s[0-9A-Za-z]{18}$/.test(s)) return { value: s.slice(-8), changed: true, suspect: false }
+  // Stray hyphen: "R9-111BGV" → "R9111BGV".
+  if (/^R9-[0-9A-Za-z]{6}$/.test(s)) return { value: s.replace("-", ""), changed: true, suspect: false }
+  // A stray "atitude" (from "Latitude") pasted in front of the serial.
+  if (/^atitude\s+/i.test(s)) return { value: s.replace(/^atitude\s+/i, ""), changed: true, suspect: false }
+
+  // Two serials in one cell, or an Excel date corruption like "05-May-04".
+  const suspect = /[()>]|\s-\s|\s{2,}/.test(s) || !/^[A-Za-z0-9]{6,9}$/.test(s)
+  return { value: s, changed: false, suspect }
+}
+
+// ------------------------------------------------------------
+// CSV IMPORT — pure row-shaping, kept out of the screen so it can be
+// exercised against the real SIMS exports without a browser.
+// ------------------------------------------------------------
+
+// Roster rows → student records. SIMS gives year level and form as separate
+// columns, so unlike the old combined "Student Yr." there is nothing to split.
+// The form is kept as SIMS writes it ("4I", not "I") — that is what staff and
+// students actually say, and it round-trips back to SIMS unchanged.
+export function buildRosterImport(rows) {
+  const byId = new Map()
+  let skipped = 0
+  for (const r of rows) {
+    const id = String(r["StudentID"] ?? "").trim()
+    if (!id) { skipped++; continue }
+    const given = String(r["StudentGiven1"] ?? "").trim()
+    const surname = String(r["StudentSurname"] ?? "").trim()
+    byId.set(id, {
+      student_id: id,
+      first_name: given || null,
+      last_name: surname || null,
+      full_name: `${given} ${surname}`.trim() || null,
+      class: String(r["StudentYearLevel"] ?? "").trim() || null,
+      form: String(r["StudentForm"] ?? "").trim() || null,
+    })
+  }
+  const students = [...byId.values()]
+  return {
+    students,
+    skipped,
+    total: rows.length,
+    noName: students.filter(s => !s.full_name).length,
+    noYear: students.filter(s => !s.class).length,
+  }
+}
+
+// SIMS device rows → device records carrying their assignment.
+//
+// This deliberately does NOT produce student records. The device export has no
+// year level and an inconsistently formatted name, so importing it as a student
+// used to null out the class/form the roster had just supplied. `roster` is the
+// set of student_ids already in the database; a row whose student is not in it
+// is reported, not invented — which is what drops the export's ~1,600 rows
+// belonging to students who have left.
+export function buildDeviceImport(rows, roster) {
+  const byStudent = new Map()   // student_id → winning row
+  let skipped = 0, notCurrent = 0, repaired = 0
+  const suspect = []
+
+  for (const r of rows) {
+    const sid = String(r["Student ID"] ?? "").trim()
+    const rawSerial = String(r["Device SN"] ?? "").trim()
+    if (!sid && !rawSerial) continue        // blank line
+    if (!sid || !rawSerial) { skipped++; continue }
+    if (!roster.has(sid)) { notCurrent++; continue }
+
+    const sn = cleanSerial(rawSerial)
+    if (sn.suspect) { suspect.push({ sid, serial: rawSerial }); skipped++; continue }
+
+    // The export is a full history, so a student can appear several times. The
+    // newest issue year is their current laptop. Ties keep the earlier row,
+    // which is the order the export already arrives in (newest block first).
+    const year = String(r["Year"] ?? "").trim()
+    const prev = byStudent.get(sid)
+    if (prev && sourceYearNum(prev._year) >= sourceYearNum(year)) continue
+    if (sn.changed && !prev) repaired++
+
+    byStudent.set(sid, {
+      serial_number: sn.value,
+      host_name: (r["Host Name"] || "").trim() || null,
+      model: (r["Model"] || "").trim() || null,
+      notes: (r["Notes"] || "").trim() || null,
+      source_year: year || null,
+      assigned_student_id: sid,
+      status: "assigned",
+      _year: year,
+    })
+  }
+
+  // One student can only hold one laptop, but two students can still name the
+  // same serial — and serial_number is unique, so the second upsert would
+  // silently steal the device from the first. Surface those instead.
+  const bySerial = new Map()
+  for (const d of byStudent.values()) {
+    const key = d.serial_number.toUpperCase()
+    if (!bySerial.has(key)) bySerial.set(key, [])
+    bySerial.get(key).push(d.assigned_student_id)
+  }
+  const clashes = [...bySerial.entries()]
+    .filter(([, ids]) => ids.length > 1)
+    .map(([serial, ids]) => ({ serial, students: ids }))
+
+  const devices = [...byStudent.values()].map(({ _year, ...d }) => d)
+  return { devices, skipped, notCurrent, repaired, suspect, clashes, total: rows.length }
 }
 
 // The SL laptop a student is assigned. Assignment is NOT a loan — an SL laptop

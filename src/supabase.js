@@ -12,3 +12,20 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '')
+
+// PostgREST caps a response at 1000 rows and gives no hint that it truncated.
+// The SIMS roster is ~2,900 students and their laptops ~1,850, so a plain
+// select() silently returns a third of the school and every lookup for a
+// missing student fails. Page through with range() instead.
+//
+//   fetchAll(q => q.select("*").order("student_id"), "students")
+//
+export async function fetchAll(build, table, page = 1000) {
+  const rows = []
+  for (let from = 0; ; from += page) {
+    const { data, error } = await build(supabase.from(table)).range(from, from + page - 1)
+    if (error) return { data: rows, error }
+    rows.push(...data)
+    if (data.length < page) return { data: rows, error: null }
+  }
+}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react"
 import { GraduationCap, HardDrive, Users, ClipboardList, Upload, Network, LogOut, Loader2 } from "lucide-react"
-import { supabase } from "./supabase"
+import { supabase, fetchAll } from "./supabase"
 import LoginScreen from "./LoginScreen"
 import BottomNav from "./BottomNav"
 import { loanState } from "./lib"
@@ -23,9 +23,11 @@ function useAppData(session) {
     if (!session) return
     // staff table may not exist until migration 0002 is run — the query just
     // returns an error we ignore, so the app keeps working (everyone non-admin).
+    // students and devices are paged — both are well past PostgREST's 1000-row
+    // response cap since the SIMS import, and it truncates without saying so.
     const [students, devices, loans, staff] = await Promise.all([
-      supabase.from("students").select("*").order("student_id"),
-      supabase.from("devices").select("*").order("host_name"),
+      fetchAll(q => q.select("*").order("student_id"), "students"),
+      fetchAll(q => q.select("*").order("host_name"), "devices"),
       supabase.from("loans").select("*").order("issued_at", { ascending: false }),
       supabase.from("staff").select("*"),
     ])

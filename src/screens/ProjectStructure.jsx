@@ -88,8 +88,8 @@ const STUDENTS = [
   [<C>first_name</C>, "text", 'Parsed from "Student Name" ("Last, First").'],
   [<C>last_name</C>, "text", "Parsed from the same column."],
   [<C>full_name</C>, "text", "Preferred display name; falls back to first + last."],
-  [<C>class</C>, "text", <span>Year level, e.g. <C>4</C>. Older imports hold the combined <C>4I</C>.</span>],
-  [<C>form</C>, "text", <span>Form group, e.g. <C>I</C>. Split out of "Student Yr." on import.</span>],
+  [<C>class</C>, "text", <span>Year level from SIMS <C>StudentYearLevel</C>, e.g. <C>4</C>. <C>0</C> means Prep and displays as such. Older imports hold the combined <C>4I</C>.</span>],
+  [<C>form</C>, "text", <span>Form group from SIMS <C>StudentForm</C>, stored verbatim, e.g. <C>4I</C>. Older imports hold just the letter, split out of "Student Yr.".</span>],
   [<C>details</C>, "jsonb", <span className="text-muted">Reserved — defaults to <C>{"{}"}</C>, nothing writes it yet.</span>],
   [<C>notes</C>, "text", "Free text."],
   [<C>archived</C>, "boolean", "Soft delete. Archived students are hidden from search."],
@@ -104,6 +104,7 @@ const DEVICES = [
   [<C>assigned_student_id</C>, "text", <span><Badge tone="neutral">FK</Badge> <span className="ml-1">→ <C>students.student_id</C>. The student whose own SL laptop this is. Assignment is <span className="font-semibold">not</span> a loan.</span></span>],
   [<C>serial_number</C>, "text", <span><Badge tone="neutral">unique</Badge> <span className="ml-1">The import key — devices are upserted by serial.</span></span>],
   [<C>model</C>, "text", "From the CSV."],
+  [<C>source_year</C>, "text", <span>The SIMS <C>Year</C> column — which year this laptop was issued. Decides which row is a student's current laptop when the export lists several. Not always numeric: <C>2020-21</C> appears on 823 rows.</span>],
   [<C>status</C>, "text", <span><C>available</C> · <C>on_loan</C> · <C>retired</C> · <C>assigned</C> (checked). Issue/return flips the first two; SL laptops sit at <C>assigned</C>.</span>],
   [<C>warranty_expiry</C>, "date", <span className="text-muted">Reserved — for the Lenovo API phase.</span>],
   [<C>insurance_status</C>, "text", <span className="text-muted">Reserved — displayed as "Insurance", no source wired.</span>],
@@ -151,7 +152,7 @@ const LIFECYCLE = [
   [
     <span className="font-semibold text-navy">1 · Import</span>,
     "Import tab (CSV)",
-    <span>Upserts <C>students</C> by ID and <C>devices</C> by serial, writing <C>assigned_student_id</C> and <C>status=assigned</C> on each laptop. <span className="font-semibold">No loans are created</span> — a student's own SL laptop is an assignment. Re-running updates rather than duplicates. A second uploader sets <C>devices.cabin</C> from an LNB/Cabin file, creating any LNB it hasn't seen.</span>,
+    <span>Two SIMS exports, in order. The <span className="font-semibold">roster</span> upserts <C>students</C> by ID and is the only thing that writes a student — it alone carries year level, form and a reliable name. The <span className="font-semibold">device</span> file then upserts <C>devices</C> by serial, writing <C>assigned_student_id</C> and <C>status=assigned</C>. It joins against the roster, so its history rows for students who have left are reported and dropped, and where a student appears several times the newest <C>source_year</C> wins. <span className="font-semibold">No loans are created</span> — a student's own SL laptop is an assignment. Re-running updates rather than duplicates. A third uploader sets <C>devices.cabin</C> from an LNB/Cabin file, creating any LNB it hasn't seen.</span>,
   ],
   [
     <span className="font-semibold text-navy">2 · Look up</span>,
@@ -191,6 +192,7 @@ const GUARDS = [
   [<span>Status stays valid</span>, <span>Check constraints on <C>devices.status</C> and <C>loans.status</C></span>, "Only the listed values can be stored."],
   [<span>Cabin stays valid</span>, <span>Check constraint on <C>devices.cabin</C></span>, "A typo in the cabin CSV is rejected by the database, not silently stored."],
   [<span>SL laptops are never loaned</span>, <span>Trigger <C>loans_device_must_be_loanable</C></span>, "A loan may only reference a device with an LNB. The UI enforces this too, but the UI is how 468 bogus loans got in once already."],
+  [<span>One laptop per student</span>, <span>Partial unique index <C>devices_one_per_student</C></span>, "A student can hold only one live assigned device. Archived rows keep their old assignment without blocking the current one."],
   [<span>Nothing is truly deleted</span>, <span><C>archived</C> flag on students and devices</span>, "Soft delete keeps the loan trail complete."],
 ]
 

@@ -1,63 +1,14 @@
 import React, { useState } from "react"
 import Papa from "papaparse"
-import { Upload, FileText, Users, HardDrive, ClipboardList, CheckCircle2, AlertTriangle, Loader2, ArrowRight, Boxes, RefreshCw, PlusCircle } from "lucide-react"
-import { supabase } from "../supabase"
+import { Upload, FileText, Users, HardDrive, ClipboardList, CheckCircle2, AlertTriangle, Loader2, ArrowRight, Boxes, RefreshCw, PlusCircle, GraduationCap } from "lucide-react"
+import { supabase, fetchAll } from "../supabase"
 import { Card, Button } from "../ui"
-import { parseName, splitClassForm, normalizeCabin } from "../lib"
+import { normalizeCabin, buildRosterImport, buildDeviceImport } from "../lib"
 
 const chunk = (arr, n) => {
   const out = []
   for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))
   return out
-}
-
-// Build a de-duplicated preview from parsed CSV rows.
-//
-// A student holding their own SL laptop is an ASSIGNMENT, not a loan. This used
-// to open an active loan per pair, which consumed each student's one permitted
-// active loan (loans_one_active_per_student) and made it impossible to issue
-// them an LNB loan laptop at all. The link now rides on the device row itself.
-function buildPreview(rows) {
-  const students = new Map()
-  const devices = new Map()
-  let skipped = 0
-
-  for (const r of rows) {
-    const sid = String(r["Student ID"] ?? "").trim()
-    const serial = String(r["Device SN"] ?? "").trim()
-    if (!sid && !serial) continue          // blank line
-    if (!sid || !serial) { skipped++; continue }
-
-    if (!students.has(sid)) {
-      const nm = parseName(r["Student Name"])
-      const cf = splitClassForm(r["Student Yr."])   // "4I" → { class: "4", form: "I" }
-      students.set(sid, {
-        student_id: sid,
-        first_name: nm.first_name || null,
-        last_name: nm.last_name || null,
-        full_name: nm.full_name || null,
-        class: cf.class || null,
-        form: cf.form || null,
-      })
-    }
-    // First occurrence of a serial wins — one device belongs to one student.
-    if (!devices.has(serial)) {
-      devices.set(serial, {
-        serial_number: serial,
-        host_name: (r["Host Name"] || "").trim() || null,
-        model: (r["Model"] || "").trim() || null,
-        assigned_student_id: sid,
-        status: "assigned",
-      })
-    }
-  }
-
-  return {
-    students: [...students.values()],
-    devices: [...devices.values()],
-    skipped,
-    total: rows.length,
-  }
 }
 
 export default function Import({ refresh, setTab }) {
@@ -70,19 +21,35 @@ export default function Import({ refresh, setTab }) {
   const onFile = (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setFileName(file.name); setError(""); setResults(null); setPreview(null); setPhase("idle")
+    setFileName(file.name); setError(""); setResults(null); setPreview(null); setPhase("reading")
     Papa.parse(file, {
       header: true,
       skipEmptyLines: "greedy",
       transformHeader: (h) => h.trim(),
-      complete: (res) => {
+      complete: async (res) => {
         try {
-          const p = buildPreview(res.data)
-          if (!p.students.length) { setError("No valid rows found. Check the file has 'Student ID' and 'Device SN' columns."); return }
+          // The roster has to be loaded first — it decides which rows are
+          // current students and which belong to somebody who has left.
+          const { data: rosterRows, error: rosterErr } = await fetchAll(
+            q => q.select("student_id"), "students"
+          )
+          if (rosterErr) throw rosterErr
+          const roster = new Set(rosterRows.map(s => s.student_id))
+          if (roster.size === 0) {
+            setError("No students in the database yet. Import the student roster first — the device file only says which laptop each student holds, not who they are.")
+            setPhase("idle"); return
+          }
+          const p = buildDeviceImport(res.data, roster)
+          if (!p.devices.length) {
+            setError(p.notCurrent > 0
+              ? `None of the ${p.notCurrent} rows match a student in the roster. Is this the right file, and is the roster up to date?`
+              : "No valid rows found. Check the file has 'Student ID' and 'Device SN' columns.")
+            setPhase("idle"); return
+          }
           setPreview(p); setPhase("preview")
-        } catch (err) { setError(err.message || "Could not read the file.") }
+        } catch (err) { setError(err.message || "Could not read the file."); setPhase("idle") }
       },
-      error: (err) => setError(err.message || "Could not parse the file."),
+      error: (err) => { setError(err.message || "Could not parse the file."); setPhase("idle") },
     })
   }
 
@@ -90,23 +57,19 @@ export default function Import({ refresh, setTab }) {
     if (!preview) return
     setPhase("importing"); setError("")
     try {
-      // 1) Students first — devices.assigned_student_id references them.
-      for (const c of chunk(preview.students, 500)) {
-        const { error } = await supabase.from("students").upsert(c, { onConflict: "student_id" })
-        if (error) throw error
-      }
-      // 2) Devices, carrying their assignment. No loans are created: an SL
-      //    laptop is the student's own machine and is never loaned.
+      // Devices only — students come from the roster import. No loans are
+      // created: an SL laptop is the student's own machine and is never loaned.
       for (const c of chunk(preview.devices, 500)) {
         const { error } = await supabase.from("devices").upsert(c, { onConflict: "serial_number" })
         if (error) throw error
       }
 
       setResults({
-        students: preview.students.length,
         devices: preview.devices.length,
         assignments: preview.devices.filter(d => d.assigned_student_id).length,
         skipped: preview.skipped,
+        notCurrent: preview.notCurrent,
+        repaired: preview.repaired,
       })
       await refresh()
       setPhase("done")
@@ -123,11 +86,18 @@ export default function Import({ refresh, setTab }) {
       <div>
         <p className="text-[10px] uppercase tracking-[0.3em] text-navy-accent mb-1.5">Setup</p>
         <h1 className="font-serif text-3xl sm:text-4xl text-navy leading-tight">Import CSV</h1>
-        <p className="text-sm text-muted mt-1">Load students and their assigned laptops from your <span className="font-medium">LWT_SL</span> export.</p>
+        <p className="text-sm text-muted mt-1">Load students and their laptops from your two <span className="font-medium">SIMS</span> exports. Import the roster first — it says who each student is, and the device file only makes sense once they exist.</p>
       </div>
 
       <div className="flex items-center gap-3">
-        <span className="text-[10px] uppercase tracking-[0.18em] text-muted shrink-0">Student holdings</span>
+        <span className="text-[10px] uppercase tracking-[0.18em] text-muted shrink-0">1 · Student roster</span>
+        <span className="h-px bg-line flex-1" />
+      </div>
+
+      <RosterImport refresh={refresh} />
+
+      <div className="flex items-center gap-3 pt-3">
+        <span className="text-[10px] uppercase tracking-[0.18em] text-muted shrink-0">2 · Student holdings</span>
         <span className="h-px bg-line flex-1" />
       </div>
 
@@ -135,8 +105,8 @@ export default function Import({ refresh, setTab }) {
       <label className="block">
         <div className="border-2 border-dashed border-line rounded-2xl p-8 text-center hover:border-navy/30 cursor-pointer transition-colors bg-white">
           <Upload size={28} className="mx-auto text-navy mb-2" />
-          <div className="text-sm font-medium text-ink">{fileName || "Choose a CSV file"}</div>
-          <div className="text-xs text-muted mt-1">Expects columns: Student ID, Student Name, Student Yr., Host Name, Device SN, Model</div>
+          <div className="text-sm font-medium text-ink">{fileName || "Choose the device CSV"}</div>
+          <div className="text-xs text-muted mt-1">Expects columns: Student ID, Device SN, Host Name, Model, Notes, Year</div>
           <input type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
         </div>
       </label>
@@ -147,19 +117,62 @@ export default function Import({ refresh, setTab }) {
         </div>
       )}
 
+      {phase === "reading" && (
+        <Card className="p-6 text-center text-sm text-muted">
+          <Loader2 size={20} className="mx-auto animate-spin text-navy mb-2" /> Reading file and matching against the roster…
+        </Card>
+      )}
+
       {/* Preview */}
       {phase === "preview" && preview && (
         <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-3">
-            <PreviewStat icon={Users} label="Students" value={preview.students.length} />
-            <PreviewStat icon={HardDrive} label="Devices" value={preview.devices.length} />
-            <PreviewStat icon={ClipboardList} label="Assignments" value={preview.devices.filter(d => d.assigned_student_id).length} />
+          <div className="grid grid-cols-2 gap-3">
+            <PreviewStat icon={HardDrive} label="Laptops" value={preview.devices.length} />
+            <PreviewStat icon={ClipboardList} label="Students matched" value={preview.devices.filter(d => d.assigned_student_id).length} />
           </div>
           <Card className="p-4 text-xs text-muted space-y-1">
             <div className="flex items-center gap-2"><FileText size={14} /> {preview.total} rows read from <span className="font-medium text-ink">{fileName}</span></div>
-            {preview.skipped > 0 && <div className="text-warn">{preview.skipped} row(s) skipped (missing Student ID or serial).</div>}
-            <div>Each laptop is recorded as <span className="font-medium text-ink">assigned</span> to its student — not as a loan. SL laptops are never loaned, so this leaves every student free to borrow an LNB laptop. Students/devices already loaded are updated, not duplicated.</div>
+            {preview.notCurrent > 0 && <div>{preview.notCurrent} row(s) belong to students who are no longer on the roster — these are past laptops and will not be imported.</div>}
+            {preview.repaired > 0 && <div>{preview.repaired} serial(s) tidied automatically (full barcode or stray hyphen).</div>}
+            {preview.skipped > 0 && <div className="text-warn">{preview.skipped} row(s) skipped — no Student ID or serial, or a serial that needs a person to read it.</div>}
+            <div>Where a student appears more than once, the laptop from the most recent <span className="font-medium text-ink">Year</span> is taken as the one they hold now.</div>
+            <div>Each laptop is recorded as <span className="font-medium text-ink">assigned</span> to its student — not as a loan. SL laptops are never loaned, so this leaves every student free to borrow an LNB laptop. Devices already loaded are updated, not duplicated.</div>
           </Card>
+
+          {preview.clashes.length > 0 && (
+            <Card className="p-4 border-alert/30 bg-alert/5">
+              <div className="flex items-center gap-2 text-alert text-sm font-medium mb-2">
+                <AlertTriangle size={16} /> {preview.clashes.length} serial(s) claimed by two students
+              </div>
+              <p className="text-xs text-muted mb-2">A serial can only belong to one laptop, so importing now would give the device to whichever student is written last and quietly leave the other with nothing. Fix these in the source file first.</p>
+              <ul className="text-xs text-ink space-y-1 max-h-40 overflow-y-auto">
+                {preview.clashes.map(c => (
+                  <li key={c.serial} className="flex justify-between gap-3">
+                    <span className="font-mono">{c.serial}</span>
+                    <span className="text-muted">students {c.students.join(" & ")}</span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
+          {preview.suspect.length > 0 && (
+            <Card className="p-4 border-warn/30 bg-warn/5">
+              <div className="flex items-center gap-2 text-warn text-sm font-medium mb-2">
+                <AlertTriangle size={16} /> {preview.suspect.length} serial(s) could not be read
+              </div>
+              <p className="text-xs text-muted mb-2">Two serials in one cell, or a value Excel turned into a date. These rows are skipped rather than guessed at.</p>
+              <ul className="text-xs text-ink space-y-1 max-h-40 overflow-y-auto">
+                {preview.suspect.map((s, i) => (
+                  <li key={i} className="flex justify-between gap-3">
+                    <span className="font-mono">{s.serial}</span>
+                    <span className="text-muted">student {s.sid}</span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
           <div className="flex gap-2">
             <Button variant="secondary" onClick={reset} className="flex-1">Choose another</Button>
             <Button variant="primary" onClick={runImport} className="flex-1"><Upload size={16} /> Import now</Button>
@@ -180,9 +193,10 @@ export default function Import({ refresh, setTab }) {
           <Card className="p-5">
             <div className="flex items-center gap-2 text-ok mb-3"><CheckCircle2 size={20} /> <span className="font-serif text-lg">Import complete</span></div>
             <ul className="text-sm text-ink space-y-1.5">
-              <li className="flex justify-between"><span className="text-muted">Students loaded/updated</span><span className="font-semibold tabular-nums">{results.students}</span></li>
               <li className="flex justify-between"><span className="text-muted">Devices loaded/updated</span><span className="font-semibold tabular-nums">{results.devices}</span></li>
               <li className="flex justify-between"><span className="text-muted">Laptops assigned to students</span><span className="font-semibold tabular-nums">{results.assignments}</span></li>
+              {results.notCurrent > 0 && <li className="flex justify-between"><span className="text-muted">Past laptops (student has left)</span><span className="font-semibold tabular-nums">{results.notCurrent}</span></li>}
+              {results.repaired > 0 && <li className="flex justify-between"><span className="text-muted">Serials tidied</span><span className="font-semibold tabular-nums">{results.repaired}</span></li>}
               {results.skipped > 0 && <li className="flex justify-between"><span className="text-muted">Rows skipped</span><span className="font-semibold tabular-nums text-warn">{results.skipped}</span></li>}
             </ul>
           </Card>
@@ -194,11 +208,123 @@ export default function Import({ refresh, setTab }) {
       )}
 
       <div className="flex items-center gap-3 pt-3">
-        <span className="text-[10px] uppercase tracking-[0.18em] text-muted shrink-0">Loan laptop cabins</span>
+        <span className="text-[10px] uppercase tracking-[0.18em] text-muted shrink-0">3 · Loan laptop cabins</span>
         <span className="h-px bg-line flex-1" />
       </div>
 
       <CabinImport refresh={refresh} />
+    </div>
+  )
+}
+
+// ============================================================
+// STUDENT ROSTER CSV — the authority on who a student is.
+// Expects columns: StudentID, StudentYearLevel, StudentForm,
+// StudentGiven1, StudentSurname (the SIMS "Current Student List").
+//
+// Note the header spellings have no spaces — they are SIMS's own, and are
+// matched exactly, so the export needs no editing beyond Save As → CSV.
+// ============================================================
+function RosterImport({ refresh }) {
+  const [fileName, setFileName] = useState("")
+  const [preview, setPreview] = useState(null)
+  const [phase, setPhase] = useState("idle") // idle | preview | importing | done
+  const [results, setResults] = useState(null)
+  const [error, setError] = useState("")
+
+  const reset = () => { setPreview(null); setFileName(""); setResults(null); setPhase("idle"); setError("") }
+
+  const onFile = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setFileName(file.name); setError(""); setResults(null); setPreview(null); setPhase("idle")
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: "greedy",
+      transformHeader: (h) => h.trim(),
+      complete: (res) => {
+        try {
+          const p = buildRosterImport(res.data)
+          if (!p.students.length) {
+            setError("No valid rows found. Check the file has a 'StudentID' column (no space).")
+            return
+          }
+          setPreview(p); setPhase("preview")
+        } catch (err) { setError(err.message || "Could not read the file.") }
+      },
+      error: (err) => setError(err.message || "Could not parse the file."),
+    })
+  }
+
+  const runImport = async () => {
+    if (!preview) return
+    setPhase("importing"); setError("")
+    try {
+      for (const c of chunk(preview.students, 500)) {
+        const { error } = await supabase.from("students").upsert(c, { onConflict: "student_id" })
+        if (error) throw error
+      }
+      setResults({ students: preview.students.length, skipped: preview.skipped })
+      await refresh()
+      setPhase("done")
+    } catch (e) {
+      setError(e.message || "Roster import failed.")
+      setPhase("preview")
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <label className="block">
+        <div className="border-2 border-dashed border-line rounded-2xl p-8 text-center hover:border-navy/30 cursor-pointer transition-colors bg-white">
+          <GraduationCap size={28} className="mx-auto text-navy mb-2" />
+          <div className="text-sm font-medium text-ink">{fileName || "Choose the student roster CSV"}</div>
+          <div className="text-xs text-muted mt-1">Expects columns: StudentID, StudentYearLevel, StudentForm, StudentGiven1, StudentSurname</div>
+          <input type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
+        </div>
+      </label>
+
+      {error && (
+        <div className="flex items-start gap-2 text-sm text-alert bg-alert/5 border border-alert/20 rounded-lg px-3 py-2">
+          <AlertTriangle size={16} className="shrink-0 mt-0.5" /><span>{error}</span>
+        </div>
+      )}
+
+      {phase === "preview" && preview && (
+        <div className="space-y-4">
+          <PreviewStat icon={Users} label="Students" value={preview.students.length} />
+          <Card className="p-4 text-xs text-muted space-y-1">
+            <div className="flex items-center gap-2"><FileText size={14} /> {preview.total} rows read from <span className="font-medium text-ink">{fileName}</span></div>
+            {preview.skipped > 0 && <div className="text-warn">{preview.skipped} row(s) skipped — no StudentID.</div>}
+            {preview.noName > 0 && <div className="text-warn">{preview.noName} student(s) have no name.</div>}
+            {preview.noYear > 0 && <div className="text-warn">{preview.noYear} student(s) have no year level.</div>}
+            <div>Students already loaded are updated, not duplicated. Nobody is deleted — a student who has left keeps their record and simply holds no laptop.</div>
+          </Card>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={reset} className="flex-1">Choose another</Button>
+            <Button variant="primary" onClick={runImport} className="flex-1"><Upload size={16} /> Import roster</Button>
+          </div>
+        </div>
+      )}
+
+      {phase === "importing" && (
+        <Card className="p-6 text-center text-sm text-muted">
+          <Loader2 size={20} className="mx-auto animate-spin text-navy mb-2" /> Importing roster…
+        </Card>
+      )}
+
+      {phase === "done" && results && (
+        <div className="space-y-4">
+          <Card className="p-5">
+            <div className="flex items-center gap-2 text-ok mb-3"><CheckCircle2 size={20} /> <span className="font-serif text-lg">Roster loaded</span></div>
+            <ul className="text-sm text-ink space-y-1.5">
+              <li className="flex justify-between"><span className="text-muted">Students loaded/updated</span><span className="font-semibold tabular-nums">{results.students}</span></li>
+              {results.skipped > 0 && <li className="flex justify-between"><span className="text-muted">Rows skipped</span><span className="font-semibold tabular-nums text-warn">{results.skipped}</span></li>}
+            </ul>
+          </Card>
+          <Button variant="secondary" onClick={reset} className="w-full">Import another roster</Button>
+        </div>
+      )}
     </div>
   )
 }
