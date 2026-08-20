@@ -27,7 +27,7 @@ insert into public.staff (id, email, is_admin)
 select u.id, u.email, true
 from auth.users u
 where u.email in (
-  'REPLACE_WITH_YOUR_EMAIL'      -- e.g. 'syed.takhi@al-taqwa.vic.edu.au'
+  'atcadmin@altaqwa.com'      -- e.g. 'syed.takhi@al-taqwa.vic.edu.au'
   -- , 'second.admin@al-taqwa.vic.edu.au'
 )
 on conflict (id) do update set is_admin = true;
