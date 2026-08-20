@@ -141,8 +141,33 @@ export function splitClassForm(raw) {
 
 // Recombine class + form back into the SIMS "Student Yr." style, e.g. "4I".
 // Inverse of splitClassForm. Prep (class "0") with no form reads "0".
+//
+// Unused since classLabel landed. It used to render the Student Devices class
+// field, where it produced "1212D" — post-restructure rows hold "12" in class
+// and the WHOLE form "12D" in form, so joining the two doubles the year. Kept
+// as the honest inverse of splitClassForm for a caller that has genuinely
+// separate parts; do not reach for it to display a student's class.
 export function classFormLabel(cls, form) {
   return `${String(cls ?? "").trim()}${String(form ?? "").trim()}`
+}
+
+// The one class label staff actually say, e.g. "12D".
+//
+// Roster imports since the restructure store the year level in `class` ("12")
+// and the FULL form in `form` ("12D", not "D") — so joining the two with
+// classFormLabel gives "1212D". Older rows kept the combined value in `class`
+// and left `form` null. Either shape reduces to the same answer here.
+export function classLabel(student) {
+  if (!student) return ""
+  return String(student.form || student.class || "").trim()
+}
+
+// The numeric year level, whichever import shape the row came from. Used for
+// the Year-4 1:1 threshold, where "12D" must not parse as NaN.
+export function yearLevelNum(student) {
+  if (!student) return NaN
+  const cls = student.form ? student.class : splitClassForm(student.class).class
+  return Number(String(cls ?? "").trim())
 }
 
 // Display form of a student ID, e.g. "21816" → "SL-21816".
@@ -184,6 +209,21 @@ export function cleanSerial(raw) {
   // Two serials in one cell, or an Excel date corruption like "05-May-04".
   const suspect = /[()>]|\s-\s|\s{2,}/.test(s) || !/^[A-Za-z0-9]{6,9}$/.test(s)
   return { value: s, changed: false, suspect }
+}
+
+// The join key between our devices and the Intune / NetSupport exports.
+//
+// devices.serial_number went through cleanSerial() at import, so a full Lenovo
+// "1s…" barcode was stored as its last 8 characters. Both consoles export the
+// raw barcode, so raw-to-raw would never match. Send both sides through the
+// same funnel, then upper-case, because the two consoles disagree about case
+// and Postgres does not. Idempotent — safe to run on an already-clean serial,
+// which is what lets it be applied on read as well as on import.
+//
+// A suspect serial still gets a key: it simply matches nothing, which is the
+// truth. Only a blank returns "".
+export function serialKey(raw) {
+  return cleanSerial(raw).value.toUpperCase()
 }
 
 // ------------------------------------------------------------
@@ -280,6 +320,97 @@ export function buildDeviceImport(rows, roster) {
 
   const devices = [...byStudent.values()].map(({ _year, ...d }) => d)
   return { devices, skipped, notCurrent, repaired, suspect, clashes, total: rows.length }
+}
+
+// ------------------------------------------------------------
+// EXTERNAL FLEET EXPORTS — Intune and NetSupport DNA
+//
+// Both tables mirror the last export from a system this app does not own.
+// Each row keeps TWO serials: serial_key, the serialKey() normalisation that
+// joins to devices, and serial_number, exactly what the console exported —
+// which is what the panel displays, because overwriting it with our repaired
+// version would quietly throw away the only copy of the raw barcode.
+// A row with no serial at all is dropped: without one there is no way to say
+// which laptop it is about.
+// ------------------------------------------------------------
+
+const txt = (v) => String(v ?? "").trim() || null
+
+// Shared shape for both export importers.
+//
+// De-dupes by key before returning, because a chunked upsert CANNOT touch the
+// same key twice in one statement — Postgres raises "ON CONFLICT DO UPDATE
+// command cannot affect row a second time" and the whole 500-row chunk is lost.
+// Re-enrolled machines genuinely do appear twice in these exports, so the last
+// row wins and the count is reported rather than swallowed.
+//
+// `imported_at` is in the payload rather than left to the column default: a
+// default only fires on INSERT, so on the UPDATE half of an upsert a re-import
+// would silently keep the original timestamp forever.
+//
+// `knownSerials` is a Set from knownSerialSet() — used only for the preview.
+function buildExportImport(rows, knownSerials, serialHeader, shape, stampedAt) {
+  const byKey = new Map()
+  let noSerial = 0, duplicates = 0
+  const imported_at = stampedAt || new Date().toISOString()
+
+  for (const r of rows) {
+    const raw = String(r[serialHeader] ?? "").trim()
+    const key = serialKey(raw)
+    if (!key) { noSerial++; continue }
+    if (byKey.has(key)) duplicates++
+    byKey.set(key, { serial_key: key, serial_number: raw, ...shape(r), imported_at })
+  }
+
+  const records = [...byKey.values()]
+  const matched = knownSerials
+    ? records.filter(d => knownSerials.has(d.serial_key)).length
+    : 0
+  return {
+    records,
+    noSerial,
+    duplicates,
+    matched,
+    unmatched: records.length - matched,
+    total: rows.length,
+  }
+}
+
+// Intune export rows → device_intune records. Headers are matched exactly as
+// the Intune console writes them, spaces and casing included.
+export function buildIntuneImport(rows, knownSerials, stampedAt) {
+  return buildExportImport(rows, knownSerials, "Serial number", (r) => ({
+    device_name: txt(r["Device name"]),
+    manufacturer: txt(r["Manufacturer"]),
+    model: txt(r["Model"]),
+    management_name: txt(r["Management name"]),
+    primary_user_upn: txt(r["Primary user UPN"]),
+    primary_user_email: txt(r["Primary user email address"]),
+    primary_user_display_name: txt(r["Primary user display name"]),
+    compliance: txt(r["Compliance"]),
+    ownership: txt(r["Ownership"]),
+    sku_family: txt(r["SkuFamily"]),
+    join_type: txt(r["JoinType"]),
+  }), stampedAt)
+}
+
+// NetSupport DNA export rows → device_netsupport records. DNA writes its
+// headers in Pascal_Snake_Case, which is why these differ in style from Intune.
+export function buildNetsupportImport(rows, knownSerials, stampedAt) {
+  return buildExportImport(rows, knownSerials, "SerialNumber", (r) => ({
+    device_name: txt(r["Device_Name"]),
+    pc_node_id: txt(r["PC_NODE_ID"]),
+    device_owner: txt(r["Device_Owner"]),
+    department: txt(r["Department"]),
+    user_name: txt(r["UserName"]),
+    logon_name: txt(r["LogonName"]),
+  }), stampedAt)
+}
+
+// The set of device serials SIMS knows, in the shape the export tables key on.
+// Used only to tell an admin how much of an export actually lands on a laptop.
+export function knownSerialSet(devices) {
+  return new Set(devices.map(d => serialKey(d.serial_number)).filter(Boolean))
 }
 
 // The SL laptop a student is assigned. Assignment is NOT a loan — an SL laptop

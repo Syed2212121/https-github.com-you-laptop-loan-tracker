@@ -1,5 +1,5 @@
 import React from "react"
-import { GraduationCap, HardDrive, ClipboardList, Users, Workflow, Link2, Shield, KeyRound, Boxes } from "lucide-react"
+import { GraduationCap, HardDrive, ClipboardList, Users, Workflow, Link2, Shield, KeyRound, Boxes, ShieldCheck, MonitorSmartphone } from "lucide-react"
 import { Card, Badge } from "../ui"
 import { ScreenHeader, LoanStateBadge } from "./common"
 import { LOAN_DAYS, DUE_SOON_DAYS, CABINS } from "../lib"
@@ -139,7 +139,39 @@ const STAFF = [
   [<C>id</C>, "uuid", <span><Badge tone="navy">PK</Badge> <span className="ml-1">→ <C>auth.users</C>, on delete cascade.</span></span>],
   [<C>email</C>, "text", "Login email."],
   [<C>is_admin</C>, "boolean", "Admins are the only role that can permanently delete rows."],
+  [<C>cabin</C>, "text", <span><C>yr3_5</C> · <C>yr6_7</C> · <C>yr8_9</C> (checked). Set means a cabin custodian: read-only inventory, may lend only from their own cupboard, and cannot see student laptops. Null means admin or full staff.</span>],
   [<C>created_at</C>, "timestamptz", "Defaults to now()."],
+]
+
+// Two mirrors of external fleet exports. Neither is app-owned data — only the
+// CSV importers write them, and both cover machines that have no devices row.
+const DEVICE_INTUNE = [
+  [<C>serial_key</C>, "text", <span><Badge tone="navy">PK</Badge> <span className="ml-1"><C>cleanSerial(serial_number)</C> upper-cased. The join to <C>devices.serial_number</C>, which went through the same funnel at import. Not displayed.</span></span>],
+  [<C>serial_number</C>, "text", <span>As Intune exported it — the raw Lenovo barcode, not the 8 characters <C>devices</C> stores. Displayed; never joined on.</span>],
+  [<C>device_name</C>, "text", <span>Intune "Device name".</span>],
+  [<C>manufacturer</C>, "text", "From the export."],
+  [<C>model</C>, "text", "From the export."],
+  [<C>management_name</C>, "text", "From the export."],
+  [<C>primary_user_upn</C>, "text", "The signed-in owner Intune knows about — usually the student."],
+  [<C>primary_user_email</C>, "text", <span>Intune "Primary user email address".</span>],
+  [<C>primary_user_display_name</C>, "text", "From the export."],
+  [<C>compliance</C>, "text", "Intune compliance state."],
+  [<C>ownership</C>, "text", "Corporate or personal, as Intune records it."],
+  [<C>sku_family</C>, "text", "From the export."],
+  [<C>join_type</C>, "text", "How the machine is joined to the tenant."],
+  [<C>imported_at</C>, "timestamptz", "Set by the importer on every row, not by a column default — a default would not re-fire on the update half of an upsert."],
+]
+
+const DEVICE_NETSUPPORT = [
+  [<C>serial_key</C>, "text", <span><Badge tone="navy">PK</Badge> <span className="ml-1">Same normalisation as <C>device_intune</C>.</span></span>],
+  [<C>serial_number</C>, "text", <span>DNA "SerialNumber", as exported.</span>],
+  [<C>device_name</C>, "text", <span>DNA "Device_Name".</span>],
+  [<C>pc_node_id</C>, "text", <span>DNA's own identity for the machine. Indexed, but not the key — a row with no serial can't be joined to a laptop and is dropped at import.</span>],
+  [<C>device_owner</C>, "text", "From the export."],
+  [<C>department</C>, "text", "From the export."],
+  [<C>user_name</C>, "text", "From the export."],
+  [<C>logon_name</C>, "text", "From the export."],
+  [<C>imported_at</C>, "timestamptz", "Set by the importer on every row."],
 ]
 
 // The three physical cabins. Source of truth is CABINS in src/lib.js — the
@@ -182,6 +214,8 @@ const RELATIONSHIPS = [
   [<span><C>devices</C> → <C>loans</C></span>, "one to many", <span>A device has many loans over time, but only one <C>active</C>.</span>, <C>restrict</C>],
   [<span><C>auth.users</C> → <C>staff</C></span>, "one to one", "Only listed users can read or write anything.", <C>cascade</C>],
   [<span><C>auth.users</C> → <C>loans</C></span>, "one to many", <span>Via <C>issued_by</C> / <C>returned_by</C> / <C>renewed_by</C>.</span>, "—"],
+  [<span><C>devices</C> → <C>device_intune</C></span>, "one to one", <span>Matched on the normalised serial, <span className="font-semibold">not</span> a foreign key — the export covers staff machines that have no <C>devices</C> row, and one orphan in a chunked upsert would take 499 good rows with it.</span>, "—"],
+  [<span><C>devices</C> → <C>device_netsupport</C></span>, "one to one", <span>Same arrangement as <C>device_intune</C>.</span>, "—"],
 ]
 
 const GUARDS = [
@@ -194,10 +228,13 @@ const GUARDS = [
   [<span>SL laptops are never loaned</span>, <span>Trigger <C>loans_device_must_be_loanable</C></span>, "A loan may only reference a device with an LNB. The UI enforces this too, but the UI is how 468 bogus loans got in once already."],
   [<span>One laptop per student</span>, <span>Partial unique index <C>devices_one_per_student</C></span>, "A student can hold only one live assigned device. Archived rows keep their old assignment without blocking the current one."],
   [<span>Nothing is truly deleted</span>, <span><C>archived</C> flag on students and devices</span>, "Soft delete keeps the loan trail complete."],
+  [<span>One export row per serial</span>, <span>Primary key on <C>serial_key</C></span>, "Re-importing an export updates rows rather than stacking copies. The importer collapses duplicate serials first — a chunked upsert can't touch the same key twice in one statement."],
 ]
 
 const ACCESS = [
-  ["Read, insert, update", <span>Any member of <C>staff</C></span>, <span>Enforced by <C>public.is_staff()</C> in row-level security.</span>],
+  ["Read", <span>Any member of <C>staff</C></span>, <span>Enforced by <C>public.is_staff()</C>. Cabin custodians are the exception: they can't see student laptops, only loan stock.</span>],
+  ["Insert, update", <span>Full staff — not cabin custodians</span>, <span><C>is_staff() and not is_cabin_scoped()</C>. This is broader than the UI, which only offers the edit buttons to admins.</span>],
+  ["Read Intune & NetSupport", <span>Full staff only</span>, <span><C>is_staff() and not is_cabin_scoped()</C> — these rows carry a student's UPN and email next to their serial, so custodians are kept out.</span>],
   ["Permanent delete", <span>Admins only (<C>is_admin</C>)</span>, <span>Enforced by <C>public.is_admin()</C>. Day-to-day work archives instead.</span>],
   ["Everyone else", "No access", "RLS is forced on every table, and public signup is off."],
 ]
@@ -270,12 +307,14 @@ export default function ProjectStructure({ data }) {
         </Card>
       </Section>
 
-      <Section icon={KeyRound} title="Tables" hint="Four tables in the public schema. Greyed rows are columns that exist but have no data source wired yet.">
+      <Section icon={KeyRound} title="Tables" hint="Six tables in the public schema. Greyed rows are columns that exist but have no data source wired yet.">
         <div className="space-y-4">
           <SchemaCard icon={GraduationCap} name="students" purpose="One row per student, keyed by their college ID." count={students.length} columns={STUDENTS} />
           <SchemaCard icon={HardDrive} name="devices" purpose="The laptop inventory — loan pool and assigned machines." count={devices.length} columns={DEVICES} />
           <SchemaCard icon={ClipboardList} name="loans" purpose="Every issue, renewal and return. The audit trail." count={loans.length} columns={LOANS} />
           <SchemaCard icon={Users} name="staff" purpose="Who may use the app, and who may delete." columns={STAFF} />
+          <SchemaCard icon={ShieldCheck} name="device_intune" purpose="Mirror of the Intune export. Read-only reference, refreshed by re-importing the CSV." columns={DEVICE_INTUNE} />
+          <SchemaCard icon={MonitorSmartphone} name="device_netsupport" purpose="Mirror of the NetSupport DNA export. Read-only reference." columns={DEVICE_NETSUPPORT} />
         </div>
       </Section>
 
@@ -314,7 +353,7 @@ export default function ProjectStructure({ data }) {
       </Section>
 
       <p className="text-xs text-muted pt-1">
-        Mirrors <C>supabase/migrations/0001</C>–<C>0006</C> and <C>src/actions.js</C>. Update this screen whenever a migration lands.
+        Mirrors <C>supabase/migrations/0001</C>–<C>0009</C> and <C>src/actions.js</C>. Update this screen whenever a migration lands.
       </p>
     </div>
   )

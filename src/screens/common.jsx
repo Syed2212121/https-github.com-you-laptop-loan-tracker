@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react"
-import { Search, X } from "lucide-react"
+import { Search, X, ChevronDown } from "lucide-react"
 import { Badge, Card } from "../ui"
 import { loanState } from "../lib"
 
@@ -38,14 +38,53 @@ export function FieldRow({ label, value }) {
   )
 }
 
+// One line carrying up to two label/value pairs — the condensed detail layout.
+// The label sits ABOVE its value rather than opposite it, which is what lets two
+// fit across a phone screen. Same blank rule as FieldRow: 0 is a real value.
+export function FieldPairRow({ items }) {
+  return (
+    <div className={`grid ${items.length > 1 ? "grid-cols-2" : "grid-cols-1"} gap-4 py-2.5 border-b border-line last:border-0`}>
+      {items.map(({ label, value }) => (
+        <div key={label} className="min-w-0">
+          <span className="block text-[11px] uppercase tracking-[0.15em] text-muted">{label}</span>
+          <span className="block text-sm text-ink break-words">{value === 0 ? "0" : (value || "—")}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // A titled panel for the fixed read-only detail layouts: header strip + FieldRows.
-export function SectionCard({ title, children }) {
+// `action` is an optional control pinned to the right of the header — an edit
+// button, typically — and is omitted for anyone without permission to use it.
+export function SectionCard({ title, action, children }) {
   return (
     <Card className="overflow-hidden">
-      <div className="px-5 py-2.5 border-b border-line bg-panel/60">
+      <div className="px-5 py-2.5 border-b border-line bg-panel/60 flex items-center justify-between gap-3">
         <span className="text-[11px] uppercase tracking-[0.18em] text-muted">{title}</span>
+        {action}
       </div>
       <div className="px-5 py-2">{children}</div>
+    </Card>
+  )
+}
+
+// A SectionCard whose body folds away. Same header treatment, plus a chevron.
+// `meta` is a short right-aligned note shown before the chevron — use it to say
+// what is inside without making the reader open it.
+export function CollapsibleSection({ title, meta, open, onToggle, children }) {
+  return (
+    <Card className="overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center gap-3 px-5 py-2.5 border-b border-line bg-panel/60 text-left hover:bg-panel"
+      >
+        <span className="text-[11px] uppercase tracking-[0.18em] text-muted min-w-0 flex-1 truncate">{title}</span>
+        {meta && <span className="text-xs text-muted shrink-0">{meta}</span>}
+        <ChevronDown size={16} className={`text-muted shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && <div className="px-5 py-2">{children}</div>}
     </Card>
   )
 }

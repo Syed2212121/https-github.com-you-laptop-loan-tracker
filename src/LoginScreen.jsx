@@ -22,7 +22,7 @@ export default function LoginScreen() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="w-44 mx-auto mb-4 flex items-center justify-center overflow-hidden rounded-xl bg-white border border-line p-3">
-            <img src="/logo.png" alt="Al-Taqwa College" className="w-full h-auto object-contain" />
+            <img src="/logo.svg" alt="Al-Taqwa College" className="w-full h-auto object-contain" />
           </div>
           <h1 className="font-serif text-2xl text-navy">Al-Taqwa College</h1>
           <p className="text-[10px] uppercase tracking-[0.3em] text-navy-accent mt-1">Laptop Loan Tracker</p>
