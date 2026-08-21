@@ -530,7 +530,7 @@ const EXPORT_KINDS = {
     table: "device_netsupport",
     build: buildNetsupportImport,
     prompt: "Choose the NetSupport DNA export",
-    columns: "Expects columns: Device_Name, PC_NODE_ID, Device_Owner, Department, UserName, LogonName, SerialNumber",
+    columns: "Expects columns: Device_Name, PC_NODE_ID, Device_Owner, Class, UserName, LogonName, SerialNumber",
     missing: "No usable rows. Check the file has a 'SerialNumber' column — that is the only thing that can be matched to a laptop.",
     stat: "DNA devices",
     done: "NetSupport DNA export loaded",

@@ -168,7 +168,7 @@ const DEVICE_NETSUPPORT = [
   [<C>device_name</C>, "text", <span>DNA "Device_Name".</span>],
   [<C>pc_node_id</C>, "text", <span>DNA's own identity for the machine. Indexed, but not the key — a row with no serial can't be joined to a laptop and is dropped at import.</span>],
   [<C>device_owner</C>, "text", "From the export."],
-  [<C>department</C>, "text", "From the export."],
+  [<C>class</C>, "text", <span>DNA "Class" — the year level DNA has against the machine. Reference only; <C>students.class</C> is the authority for a student's year.</span>],
   [<C>user_name</C>, "text", "From the export."],
   [<C>logon_name</C>, "text", "From the export."],
   [<C>imported_at</C>, "timestamptz", "Set by the importer on every row."],

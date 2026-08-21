@@ -32,7 +32,7 @@ const NETSUPPORT_FIELDS = [
   ["Device_Name", "device_name"],
   ["PC_NODE_ID", "pc_node_id"],
   ["Device_Owner", "device_owner"],
-  ["Department", "department"],
+  ["Class", "class"],
   ["UserName", "user_name"],
   ["LogonName", "logon_name"],
   ["SerialNumber", "serial_number"],

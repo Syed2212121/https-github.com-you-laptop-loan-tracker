@@ -396,12 +396,17 @@ export function buildIntuneImport(rows, knownSerials, stampedAt) {
 
 // NetSupport DNA export rows → device_netsupport records. DNA writes its
 // headers in Pascal_Snake_Case, which is why these differ in style from Intune.
+//
+// "Class" is the year level DNA holds against the machine ("8"), not a form
+// group — DNA exports "Form" ("8I") separately and we do not keep it, because
+// students.class and students.form already say the same thing with the roster
+// behind them. This column is here to show what DNA itself believes.
 export function buildNetsupportImport(rows, knownSerials, stampedAt) {
   return buildExportImport(rows, knownSerials, "SerialNumber", (r) => ({
     device_name: txt(r["Device_Name"]),
     pc_node_id: txt(r["PC_NODE_ID"]),
     device_owner: txt(r["Device_Owner"]),
-    department: txt(r["Department"]),
+    class: txt(r["Class"]),
     user_name: txt(r["UserName"]),
     logon_name: txt(r["LogonName"]),
   }), stampedAt)
