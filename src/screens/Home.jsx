@@ -1,5 +1,5 @@
 import React from "react"
-import { GraduationCap, HardDrive, Users, ClipboardList, Upload, Network, ChevronRight } from "lucide-react"
+import { GraduationCap, Layers, Users, ClipboardList, Upload, Network, ChevronRight } from "lucide-react"
 
 function ActionCard({ icon: Icon, title, desc, onClick }) {
   return (
@@ -19,7 +19,7 @@ function ActionCard({ icon: Icon, title, desc, onClick }) {
   )
 }
 
-export default function Home({ setTab }) {
+export default function Home({ data, setTab }) {
   return (
     <div className="space-y-6 animate-fadeIn">
       <div>
@@ -28,7 +28,11 @@ export default function Home({ setTab }) {
 
       <div className="space-y-3">
         <ActionCard icon={GraduationCap} title="Student Devices" desc="Look up a student and their assigned device" onClick={() => setTab("studentDevices")} />
-        <ActionCard icon={HardDrive} title="Loan Devices" desc="Search the laptop inventory by serial or name" onClick={() => setTab("loanDevices")} />
+        {/* Hidden for cabin custodians for the same reason App.jsx hides the
+            tab: RLS leaves them nothing to see there. */}
+        {!data.cabin && (
+          <ActionCard icon={Layers} title="Device Class Details" desc="List a whole class with their laptops and enrolment" onClick={() => setTab("deviceClass")} />
+        )}
         <ActionCard icon={Users} title="Staff Devices" desc="Staff device register" onClick={() => setTab("staffDevices")} />
         <ActionCard icon={ClipboardList} title="Loan Portal" desc="Issue, return and view a student's loan history" onClick={() => setTab("loanPortal")} />
         <ActionCard icon={Upload} title="Import" desc="Load students & devices from CSV" onClick={() => setTab("import")} />

@@ -1,11 +1,17 @@
 import React from "react"
 
+// Column count as a lookup of literal class names, never an interpolated
+// `grid-cols-${n}`: Tailwind scans source text, so a class it never sees
+// spelled out is never generated. Cabin custodians get one tab fewer than
+// full staff, and the old hardcoded grid-cols-4 would leave them a gap.
+const COLS = { 1: "grid-cols-1", 2: "grid-cols-2", 3: "grid-cols-3", 4: "grid-cols-4", 5: "grid-cols-5" }
+
 // Fixed bottom navigation for mobile. Hidden on desktop (md+).
 // items: [{ key, label, icon: Icon, badge? }]
 export default function BottomNav({ items, tab, setTab }) {
   return (
     <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur border-t border-line pb-safe">
-      <div className="grid grid-cols-4">
+      <div className={`grid ${COLS[items.length] || "grid-cols-4"}`}>
         {items.map(({ key, label, icon: Icon, badge }) => {
           const active = tab === key
           return (

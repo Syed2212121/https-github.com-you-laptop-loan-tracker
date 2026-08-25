@@ -1,6 +1,6 @@
 import React from "react"
 import { GraduationCap, HardDrive, ClipboardList, Users, Workflow, Link2, Shield, KeyRound, Boxes, ShieldCheck, MonitorSmartphone } from "lucide-react"
-import { Card, Badge } from "../ui"
+import { Card, Badge, Table } from "../ui"
 import { ScreenHeader, LoanStateBadge } from "./common"
 import { LOAN_DAYS, DUE_SOON_DAYS, CABINS } from "../lib"
 
@@ -16,34 +16,6 @@ import { LOAN_DAYS, DUE_SOON_DAYS, CABINS } from "../lib"
 const C = ({ children }) => (
   <code className="font-mono text-[12px] text-navy bg-panel px-1.5 py-0.5 rounded whitespace-nowrap">{children}</code>
 )
-
-// Horizontally scrollable table — the page body must never scroll sideways.
-function Table({ head, rows, minWidth = 560 }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm border-collapse" style={{ minWidth }}>
-        <thead>
-          <tr className="border-b border-line">
-            {head.map((h) => (
-              <th key={h} className="text-left text-[10px] uppercase tracking-[0.15em] text-muted font-semibold py-2 pr-4 last:pr-0">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i} className="border-b border-line last:border-0 align-top">
-              {r.map((cell, j) => (
-                <td key={j} className="py-2.5 pr-4 last:pr-0 text-ink">{cell}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
 
 function Section({ icon: Icon, title, hint, children }) {
   return (
@@ -106,6 +78,7 @@ const DEVICES = [
   [<C>model</C>, "text", "From the CSV."],
   [<C>source_year</C>, "text", <span>The SIMS <C>Year</C> column — which year this laptop was issued. Decides which row is a student's current laptop when the export lists several. Not always numeric: <C>2020-21</C> appears on 823 rows.</span>],
   [<C>status</C>, "text", <span><C>available</C> · <C>on_loan</C> · <C>retired</C> · <C>assigned</C> (checked). Issue/return flips the first two; SL laptops sit at <C>assigned</C>.</span>],
+  [<C>netsupport_school</C>, "boolean", <span>Not null, defaults false. The one management field staff set by HAND — no console exports it. Ticked from Device Class Details; never written by the importers.</span>],
   [<C>warranty_expiry</C>, "date", <span className="text-muted">Reserved — for the Lenovo API phase.</span>],
   [<C>insurance_status</C>, "text", <span className="text-muted">Reserved — displayed as "Insurance", no source wired.</span>],
   [<C>insurance_log</C>, "text", <span className="text-muted">Reserved — displayed, no source wired.</span>],
@@ -188,7 +161,7 @@ const LIFECYCLE = [
   ],
   [
     <span className="font-semibold text-navy">2 · Look up</span>,
-    "Students · Devices · Loan Portal",
+    <span className="text-muted">Read only, apart from the NetSupport School tick on Device Class Details.</span>,
     <span className="text-muted">Read only. Nothing is written by searching.</span>,
   ],
   [
@@ -233,7 +206,7 @@ const GUARDS = [
 
 const ACCESS = [
   ["Read", <span>Any member of <C>staff</C></span>, <span>Enforced by <C>public.is_staff()</C>. Cabin custodians are the exception: they can't see student laptops, only loan stock.</span>],
-  ["Insert, update", <span>Full staff — not cabin custodians</span>, <span><C>is_staff() and not is_cabin_scoped()</C>. This is broader than the UI, which only offers the edit buttons to admins.</span>],
+  ["Insert, update", <span>Full staff — not cabin custodians</span>, <span><C>is_staff() and not is_cabin_scoped()</C>. The UI is mostly stricter than this: the edit modals are admin-only. The NetSupport School tick is the exception — it matches the policy exactly, because no importer owns that column.</span>],
   ["Read Intune & NetSupport", <span>Full staff only</span>, <span><C>is_staff() and not is_cabin_scoped()</C> — these rows carry a student's UPN and email next to their serial, so custodians are kept out.</span>],
   ["Permanent delete", <span>Admins only (<C>is_admin</C>)</span>, <span>Enforced by <C>public.is_admin()</C>. Day-to-day work archives instead.</span>],
   ["Everyone else", "No access", "RLS is forced on every table, and public signup is off."],

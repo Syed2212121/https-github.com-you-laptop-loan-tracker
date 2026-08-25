@@ -161,3 +161,40 @@ export function Badge({ children, tone = "neutral", className = "" }) {
     </span>
   )
 }
+
+// Horizontally scrollable table — the page body must never scroll sideways.
+//
+//   head: string[]            column headings
+//   rows: ReactNode[][]       cells may be JSX, not just text
+//   minWidth                  px below which the table scrolls inside itself
+//                             rather than squashing; set it to whatever the
+//                             columns genuinely need.
+//
+// Presentational only: no sorting, no pagination, no column config. Callers
+// hand it finished rows.
+export function Table({ head, rows, minWidth = 560 }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm border-collapse" style={{ minWidth }}>
+        <thead>
+          <tr className="border-b border-line">
+            {head.map((h) => (
+              <th key={h} className="text-left text-[10px] uppercase tracking-[0.15em] text-muted font-semibold py-2 pr-4 last:pr-0">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="border-b border-line last:border-0 align-top">
+              {r.map((cell, j) => (
+                <td key={j} className="py-2.5 pr-4 last:pr-0 text-ink">{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}

@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react"
-import { GraduationCap, HardDrive, Users, ClipboardList, Upload, Network, LogOut, Loader2 } from "lucide-react"
+import { GraduationCap, Layers, Users, ClipboardList, Upload, Network, LogOut, Loader2 } from "lucide-react"
 import { supabase, fetchAll } from "./supabase"
 import LoginScreen from "./LoginScreen"
 import BottomNav from "./BottomNav"
 import { loanState, cabinByKey } from "./lib"
 import Home from "./screens/Home"
 import StudentDevices from "./screens/StudentDevices"
-import LoanDevices from "./screens/LoanDevices"
+import DeviceClassDetails from "./screens/DeviceClassDetails"
 import StaffDevices from "./screens/StaffDevices"
 import LoanPortal from "./screens/LoanPortal"
 import Import from "./screens/Import"
@@ -85,12 +85,15 @@ export default function App() {
 
   const navItems = [
     { key: "studentDevices", label: "Students", icon: GraduationCap },
-    { key: "loanDevices", label: "Devices", icon: HardDrive },
+    // Device Class Details reads the student SL fleet and both export mirrors,
+    // all of which RLS keeps away from cabin custodians (0008, 0009) — for them
+    // the screen could only ever render an empty table.
+    ...(myCabin ? [] : [{ key: "deviceClass", label: "Classes", icon: Layers }]),
     { key: "staffDevices", label: "Staff", icon: Users },
     { key: "loanPortal", label: "Loan", icon: ClipboardList },
   ]
   // Import and Structure are setup/reference screens — desktop header only,
-  // so the mobile bottom bar stays on the four daily tasks.
+  // so the mobile bottom bar stays on the daily tasks.
   const topNav = [
     ...navItems,
     ...(myCabin ? [] : [{ key: "import", label: "Import", icon: Upload }]),
@@ -153,7 +156,7 @@ export default function App() {
           <>
             {tab === "home" && <Home {...screenProps} />}
             {tab === "studentDevices" && <StudentDevices {...screenProps} />}
-            {tab === "loanDevices" && <LoanDevices {...screenProps} />}
+            {tab === "deviceClass" && !myCabin && <DeviceClassDetails {...screenProps} />}
             {tab === "staffDevices" && <StaffDevices {...screenProps} />}
             {tab === "loanPortal" && <LoanPortal {...screenProps} />}
             {tab === "import" && !myCabin && <Import {...screenProps} />}
