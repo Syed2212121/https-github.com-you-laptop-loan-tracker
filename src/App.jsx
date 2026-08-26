@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react"
-import { GraduationCap, Layers, Users, ClipboardList, Upload, Network, LogOut, Loader2 } from "lucide-react"
+import { GraduationCap, Layers, Users, ClipboardList, Boxes, Upload, Network, LogOut, Loader2 } from "lucide-react"
 import { supabase, fetchAll } from "./supabase"
 import LoginScreen from "./LoginScreen"
 import BottomNav from "./BottomNav"
@@ -7,6 +7,7 @@ import { loanState, cabinByKey } from "./lib"
 import Home from "./screens/Home"
 import StudentDevices from "./screens/StudentDevices"
 import DeviceClassDetails from "./screens/DeviceClassDetails"
+import Trolleys from "./screens/Trolleys"
 import StaffDevices from "./screens/StaffDevices"
 import LoanPortal from "./screens/LoanPortal"
 import Import from "./screens/Import"
@@ -17,7 +18,7 @@ import ProjectStructure from "./screens/ProjectStructure"
 // ============================================================
 function useAppData(session) {
   const [loading, setLoading] = useState(true)
-  const [data, setData] = useState({ students: [], devices: [], loans: [], isAdmin: false, cabin: null })
+  const [data, setData] = useState({ students: [], devices: [], loans: [], trolleys: [], isAdmin: false, cabin: null })
 
   const load = useCallback(async () => {
     if (!session) return
@@ -25,16 +26,20 @@ function useAppData(session) {
     // returns an error we ignore, so the app keeps working (everyone non-admin).
     // students and devices are paged — both are well past PostgREST's 1000-row
     // response cap since the SIMS import, and it truncates without saying so.
-    const [students, devices, loans, staff] = await Promise.all([
+    const [students, devices, loans, trolleys, staff] = await Promise.all([
       fetchAll(q => q.select("*").order("student_id"), "students"),
       fetchAll(q => q.select("*").order("host_name"), "devices"),
       supabase.from("loans").select("*").order("issued_at", { ascending: false }),
+      // Five rows, not five thousand — nowhere near the paging cap, so this is
+      // a plain select like loans and staff rather than a fetchAll.
+      supabase.from("trolleys").select("*").order("name"),
       supabase.from("staff").select("*"),
     ])
     const me = (staff.data || []).find(s => s.id === session.user.id)
     setData({
       students: students.data || [],
       devices: devices.data || [],
+      trolleys: trolleys.data || [],
       loans: loans.data || [],
       isAdmin: me?.is_admin || false,
       // Cabin custodians are scoped to one cupboard: read-only inventory, and
@@ -91,6 +96,9 @@ export default function App() {
     ...(myCabin ? [] : [{ key: "deviceClass", label: "Classes", icon: Layers }]),
     { key: "staffDevices", label: "Staff", icon: Users },
     { key: "loanPortal", label: "Loan", icon: ClipboardList },
+    // Not guarded on myCabin, unlike Classes: a custodian can read every LNB
+    // laptop already, so the carts are a genuine read-only stock view for them.
+    { key: "trolleys", label: "Trolley", icon: Boxes },
   ]
   // Import and Structure are setup/reference screens — desktop header only,
   // so the mobile bottom bar stays on the daily tasks.
@@ -159,6 +167,7 @@ export default function App() {
             {tab === "deviceClass" && !myCabin && <DeviceClassDetails {...screenProps} />}
             {tab === "staffDevices" && <StaffDevices {...screenProps} />}
             {tab === "loanPortal" && <LoanPortal {...screenProps} />}
+            {tab === "trolleys" && <Trolleys {...screenProps} />}
             {tab === "import" && !myCabin && <Import {...screenProps} />}
             {tab === "structure" && <ProjectStructure {...screenProps} />}
           </>

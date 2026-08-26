@@ -72,6 +72,7 @@ const DEVICES = [
   [<C>id</C>, "uuid", <span><Badge tone="navy">PK</Badge> <span className="ml-1">Generated. Loans reference this, not the serial.</span></span>],
   [<C>lnb</C>, "text", <span><Badge tone="neutral">unique</Badge> <span className="ml-1">Asset number IT uses day to day, e.g. <C>LNB-0166</C>. Present only on loan laptops — its presence is what makes a device loanable.</span></span>],
   [<C>cabin</C>, "text", <span><C>yr3_5</C> · <C>yr6_7</C> · <C>yr8_9</C> (checked). Which cabin the loan laptop lives in. Null until the cabin CSV is imported.</span>],
+  [<C>trolley_id</C>, "uuid", <span>→ <C>trolleys</C>, on delete <C>set null</C>. Which cart this loan laptop lives in. Separate axis from <C>cabin</C>: a cabin is an access boundary, a trolley is a place. Set from the Trolley tab; no importer writes it.</span>],
   [<C>host_name</C>, "text", <span>e.g. <C>SL-21816</C> — the machine name. Usually encodes the student ID, but not reliably: of 468 CSV rows, 109 disagree and 73 are blank. Never rely on it to identify the owner.</span>],
   [<C>assigned_student_id</C>, "text", <span><Badge tone="neutral">FK</Badge> <span className="ml-1">→ <C>students.student_id</C>. The student whose own SL laptop this is. Assignment is <span className="font-semibold">not</span> a loan.</span></span>],
   [<C>serial_number</C>, "text", <span><Badge tone="neutral">unique</Badge> <span className="ml-1">The import key — devices are upserted by serial.</span></span>],
@@ -147,6 +148,13 @@ const DEVICE_NETSUPPORT = [
   [<C>imported_at</C>, "timestamptz", "Set by the importer on every row."],
 ]
 
+const TROLLEYS = [
+  [<C>id</C>, "uuid", <span><Badge tone="navy">PK</Badge> <span className="ml-1">Generated. <C>devices.trolley_id</C> points at this.</span></span>],
+  [<C>name</C>, "text", <span><Badge tone="neutral">unique</Badge> <span className="ml-1">Unique case-insensitively, so "Trolley A" and "trolley a" cannot both exist.</span></span>],
+  [<C>location</C>, "text", <span>Free text — where the cart is right now, e.g. <C>Lab 2</C>. Deliberately unconstrained; carts move.</span>],
+  [<C>created_at</C>, "timestamptz", "Defaults to now()."],
+]
+
 // The three physical cabins. Source of truth is CABINS in src/lib.js — the
 // mapping is code, not data, so only devices.cabin lives in the database.
 const CABIN_ROWS = CABINS.map(c => [<C>{c.key}</C>, c.label, c.staff.join(" · ")])
@@ -189,6 +197,7 @@ const RELATIONSHIPS = [
   [<span><C>auth.users</C> → <C>loans</C></span>, "one to many", <span>Via <C>issued_by</C> / <C>returned_by</C> / <C>renewed_by</C>.</span>, "—"],
   [<span><C>devices</C> → <C>device_intune</C></span>, "one to one", <span>Matched on the normalised serial, <span className="font-semibold">not</span> a foreign key — the export covers staff machines that have no <C>devices</C> row, and one orphan in a chunked upsert would take 499 good rows with it.</span>, "—"],
   [<span><C>devices</C> → <C>device_netsupport</C></span>, "one to one", <span>Same arrangement as <C>device_intune</C>.</span>, "—"],
+  [<span><C>trolleys</C> → <C>devices</C></span>, "one to many", <span>A cart holds many laptops; a laptop is in at most one cart. Adding a laptop to a second trolley moves it.</span>, <C>set null</C>],
 ]
 
 const GUARDS = [
@@ -226,6 +235,7 @@ export default function ProjectStructure({ data }) {
   const students = data?.students ?? []
   const devices = data?.devices ?? []
   const loans = data?.loans ?? []
+  const trolleys = data?.trolleys ?? []
 
   // Sample loans for the state legend — a real one when we have it, otherwise a
   // synthetic date so the badges still render.
@@ -280,7 +290,7 @@ export default function ProjectStructure({ data }) {
         </Card>
       </Section>
 
-      <Section icon={KeyRound} title="Tables" hint="Six tables in the public schema. Greyed rows are columns that exist but have no data source wired yet.">
+      <Section icon={KeyRound} title="Tables" hint="Seven tables in the public schema. Greyed rows are columns that exist but have no data source wired yet.">
         <div className="space-y-4">
           <SchemaCard icon={GraduationCap} name="students" purpose="One row per student, keyed by their college ID." count={students.length} columns={STUDENTS} />
           <SchemaCard icon={HardDrive} name="devices" purpose="The laptop inventory — loan pool and assigned machines." count={devices.length} columns={DEVICES} />
@@ -288,6 +298,7 @@ export default function ProjectStructure({ data }) {
           <SchemaCard icon={Users} name="staff" purpose="Who may use the app, and who may delete." columns={STAFF} />
           <SchemaCard icon={ShieldCheck} name="device_intune" purpose="Mirror of the Intune export. Read-only reference, refreshed by re-importing the CSV." columns={DEVICE_INTUNE} />
           <SchemaCard icon={MonitorSmartphone} name="device_netsupport" purpose="Mirror of the NetSupport DNA export. Read-only reference." columns={DEVICE_NETSUPPORT} />
+          <SchemaCard icon={Boxes} name="trolleys" purpose="The physical carts loan laptops live in. A name, a place, and whatever is in it." count={trolleys.length} columns={TROLLEYS} />
         </div>
       </Section>
 

@@ -1,5 +1,5 @@
 import React from "react"
-import { GraduationCap, Layers, Users, ClipboardList, Upload, Network, ChevronRight } from "lucide-react"
+import { GraduationCap, Layers, Users, ClipboardList, Boxes, Upload, Network, ChevronRight } from "lucide-react"
 
 function ActionCard({ icon: Icon, title, desc, onClick }) {
   return (
@@ -35,6 +35,7 @@ export default function Home({ data, setTab }) {
         )}
         <ActionCard icon={Users} title="Staff Devices" desc="Staff device register" onClick={() => setTab("staffDevices")} />
         <ActionCard icon={ClipboardList} title="Loan Portal" desc="Issue, return and view a student's loan history" onClick={() => setTab("loanPortal")} />
+        <ActionCard icon={Boxes} title="Trolleys" desc="Which laptops are in which cart, and where the cart is" onClick={() => setTab("trolleys")} />
         <ActionCard icon={Upload} title="Import" desc="Load students & devices from CSV" onClick={() => setTab("import")} />
         <ActionCard icon={Network} title="Project Structure" desc="Tables, fields and how a loan moves" onClick={() => setTab("structure")} />
       </div>
